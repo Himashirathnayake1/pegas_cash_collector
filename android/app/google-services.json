@@ -1,0 +1,105 @@
+{
+  "project_info": {
+    "project_number": "174048970421",
+    "project_id": "cash-collector-app",
+    "storage_bucket": "cash-collector-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:174048970421:android:6b1512839a16ec6efda0fc",
+        "android_client_info": {
+          "package_name": "com.example.cash_collector"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDMwEQ8opYqSuA19xdjYj5AKelG2xyJ5JU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:174048970421:android:970ebc197268c45bfda0fc",
+        "android_client_info": {
+          "package_name": "com.example.cashadder"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDMwEQ8opYqSuA19xdjYj5AKelG2xyJ5JU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:174048970421:android:a1a2553c6c164082fda0fc",
+        "android_client_info": {
+          "package_name": "com.example.pegas_cashcollector"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDMwEQ8opYqSuA19xdjYj5AKelG2xyJ5JU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:174048970421:android:6eb292259ed59c83fda0fc",
+        "android_client_info": {
+          "package_name": "com.example.pegas_store"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDMwEQ8opYqSuA19xdjYj5AKelG2xyJ5JU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:174048970421:android:41d64e1101f8864afda0fc",
+        "android_client_info": {
+          "package_name": "com.example.pegasflex_admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDMwEQ8opYqSuA19xdjYj5AKelG2xyJ5JU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
