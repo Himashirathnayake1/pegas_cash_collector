@@ -5,6 +5,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shimmer/shimmer.dart';
 import 'home_screen.dart';
 import '../services/mock_data_service.dart';
+import '../services/branch_auth_service.dart';
+import '../services/branch_context.dart';
 import '../utils/app_theme.dart';
 
 class AccessCodeEntryScreen extends StatefulWidget {
@@ -15,11 +17,20 @@ class AccessCodeEntryScreen extends StatefulWidget {
 class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
     with TickerProviderStateMixin {
   final TextEditingController _codeController = TextEditingController();
+  final BranchAuthService _branchAuthService = BranchAuthService();
   String? _errorMessage;
   bool _isChecking = false;
-  String? _selectedArea;
+  String? _selectedBranch;
+  String? _selectedRole;
+  bool _isLoadingBranches = true;
+  List<String> _branches = [];
 
-  final List<String> _routes = ['Kinniya', 'Mutur', 'Kantale', 'Matale'];
+  final List<String> _roles = ['cashCollector', 'adder', 'store'];
+  final Map<String, String> _roleLabels = {
+    'cashCollector': 'Cash Collector',
+    'adder': 'Adder',
+    'store': 'Store Keeper',
+  };
 
   // Animation controllers
   late final AnimationController _pulse, _fadeSlide, _dots, _particles, _glow;
@@ -55,6 +66,34 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
         CurvedAnimation(parent: _fadeSlide, curve: Curves.easeOutCubic));
     _glowAnimation = Tween(begin: 0.3, end: 0.8)
         .animate(CurvedAnimation(parent: _glow, curve: Curves.easeInOut));
+
+    // Load branches from Firestore
+    _loadBranches();
+  }
+
+  Future<void> _loadBranches() async {
+    try {
+      print('🔄 Loading branches...');
+      final branches = await _branchAuthService.fetchBranchIds();
+      
+      if (branches.isEmpty) {
+        print('⚠️ No branches returned from Firestore');
+        print('   If branches are set up, check Firestore rules and network connectivity');
+      }
+      
+      setState(() {
+        _branches = branches;
+        _isLoadingBranches = false;
+      });
+      
+      print('✅ Branches loaded: $_branches');
+    } catch (e) {
+      print('❌ Error loading branches: $e');
+      setState(() {
+        _isLoadingBranches = false;
+        _errorMessage = 'Failed to load branches: $e';
+      });
+    }
   }
 
   @override
@@ -69,16 +108,30 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
   }
 
   Future<bool> _verifyAccessCode(String inputCode) async {
-    await Future.delayed(const Duration(milliseconds: 500));
-    final mockService = MockDataService();
-    return mockService.verifyAccessCode(inputCode);
+    // Verify against Firestore
+    if (_selectedBranch == null || _selectedRole == null) {
+      print('❌ Branch or role not selected');
+      return false;
+    }
+    
+    print('🔐 Attempting to verify code for branch=$_selectedBranch, role=$_selectedRole, code=$inputCode');
+    return await _branchAuthService.verifyAccessCode(
+      branchId: _selectedBranch!,
+      role: _selectedRole!,
+      accessCode: inputCode,
+    );
   }
 
   void _onSubmit() async {
     final input = _codeController.text.trim();
 
-    if (_selectedArea == null) {
-      setState(() => _errorMessage = "Please select a route.");
+    if (_selectedBranch == null) {
+      setState(() => _errorMessage = "Select Your branch.");
+      return;
+    }
+
+    if (_selectedRole == null) {
+      setState(() => _errorMessage = "Please select a role.");
       return;
     }
 
@@ -97,10 +150,13 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
     setState(() => _isChecking = false);
 
     if (isValid) {
+      // Save branch and role to context
+      BranchContext().setBranchAndRole(_selectedBranch!, _selectedRole!);
+      
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-            builder: (_) => RoutePage(selectedArea: _selectedArea!)),
+            builder: (_) => RoutePage(selectedArea: _selectedBranch!)),
       );
     } else {
       // Clear the code field
@@ -360,10 +416,19 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
                               ),
                               child: Column(
                                 children: [
-                                  // Route Selection
-                                  _buildLabel("Select Route"),
+                                  // Branch Selection
+                                  _buildLabel("Select Branch"),
                                   const SizedBox(height: 12),
-                                  _buildRouteDropdown(),
+                                  _isLoadingBranches
+                                      ? _buildLoadingDropdown()
+                                      : _buildBranchDropdown(),
+
+                                  const SizedBox(height: 20),
+
+                                  // Role Selection
+                                  _buildLabel("Select Role"),
+                                  const SizedBox(height: 12),
+                                  _buildRoleDropdown(),
 
                                   const SizedBox(height: 28),
 
@@ -442,13 +507,201 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
     );
   }
 
+  Widget _buildLoadingDropdown() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.1),
+          width: 1.5,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.location_city_outlined,
+              color: AppColors.textMuted, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              "Loading branches...",
+              style: TextStyle(color: AppColors.textMuted, fontSize: 16),
+            ),
+          ),
+          SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: AppColors.accentTeal,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBranchDropdown() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: _selectedBranch != null
+                ? AppColors.accentTeal.withOpacity(0.5)
+                : Colors.white.withOpacity(0.1),
+          width: 1.5,
+        ),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedBranch,
+          hint: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Icon(Icons.location_city_outlined,
+                    color: AppColors.textMuted, size: 20),
+                const SizedBox(width: 12),
+                Text(
+                  "Choose a branch",
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+          isExpanded: true,
+          icon: Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Icon(Icons.keyboard_arrow_down_rounded,
+                color: AppColors.accentTeal),
+          ),
+          dropdownColor: AppColors.surfaceCard,
+          borderRadius: BorderRadius.circular(16),
+          style: GoogleFonts.poppins(
+            fontSize: 16,
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w500,
+          ),
+          items: _branches.map((String branch) {
+            return DropdownMenuItem<String>(
+              value: branch,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.accentTeal.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(Icons.location_city,
+                          color: AppColors.accentTeal, size: 18),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(branch[0].toUpperCase() + branch.substring(1)),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+          onChanged: (String? newValue) {
+            setState(() {
+              _selectedBranch = newValue;
+              _selectedRole = null; // Reset role when branch changes
+              _errorMessage = null;
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRoleDropdown() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: _selectedRole != null
+                ? AppColors.accentBlue.withOpacity(0.5)
+                : Colors.white.withOpacity(0.1),
+          width: 1.5,
+        ),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedRole,
+          hint: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Icon(Icons.person_outline,
+                    color: AppColors.textMuted, size: 20),
+                const SizedBox(width: 12),
+                Text(
+                  "Choose your role",
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+          isExpanded: true,
+          icon: Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Icon(Icons.keyboard_arrow_down_rounded,
+                color: AppColors.accentBlue),
+          ),
+          dropdownColor: AppColors.surfaceCard,
+          borderRadius: BorderRadius.circular(16),
+          style: GoogleFonts.poppins(
+            fontSize: 16,
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w500,
+          ),
+          items: _roles.map((String role) {
+            return DropdownMenuItem<String>(
+              value: role,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.accentBlue.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(Icons.person,
+                          color: AppColors.accentBlue, size: 18),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(_roleLabels[role] ?? role),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+          onChanged: (String? newValue) {
+            setState(() {
+              _selectedRole = newValue;
+              _errorMessage = null;
+            });
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildRouteDropdown() {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.08),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-            color: _selectedArea != null
+            color: _selectedBranch != null
               ? AppColors.accentTeal.withOpacity(0.5)
               : Colors.white.withOpacity(0.1),
           width: 1.5,
@@ -456,7 +709,7 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: _selectedArea,
+          value: _selectedBranch,
           hint: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
@@ -484,9 +737,9 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
             color: AppColors.textPrimary,
             fontWeight: FontWeight.w500,
           ),
-          items: _routes.map((String route) {
+          items: _branches.map((String branch) {
             return DropdownMenuItem<String>(
-              value: route,
+              value: branch,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
@@ -501,7 +754,7 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
                           color: AppColors.accentTeal, size: 18),
                     ),
                     const SizedBox(width: 12),
-                    Text(route),
+                    Text(branch),
                   ],
                 ),
               ),
@@ -509,7 +762,7 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
           }).toList(),
           onChanged: (String? newValue) {
             setState(() {
-              _selectedArea = newValue;
+              _selectedBranch = newValue;
               _errorMessage = null;
             });
           },
