@@ -35,6 +35,8 @@ class _BalanceScreenState extends State<BalanceScreen>
   bool _isProcessing = false;
   double? shopLatitude;
   double? shopLongitude;
+  String branchName = 'Pegas Flex';
+  String branchPhone = '';
 
   List<Map<String, dynamic>> transactions = [];
   final firestore = FirebaseFirestore.instance;
@@ -46,6 +48,7 @@ class _BalanceScreenState extends State<BalanceScreen>
   void initState() {
     super.initState();
     _fetchBalance();
+    _fetchBranchDetails();
     _fadeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -177,6 +180,32 @@ class _BalanceScreenState extends State<BalanceScreen>
           backgroundColor: AppColors.errorDark,
         ),
       );
+    }
+  }
+
+  Future<void> _fetchBranchDetails() async {
+    try {
+      final branchId = BranchContext().branchId;
+      
+      final branchDoc = await firestore
+          .collection('branches')
+          .doc(branchId)
+          .get();
+
+      if (branchDoc.exists) {
+        final data = branchDoc.data() ?? {};
+        
+        setState(() {
+          branchName = (branchId != null && branchId.isNotEmpty) 
+              ? branchId[0].toUpperCase() + branchId.substring(1) 
+              : 'Pegas Flex';
+          branchPhone = data['phoneNumber'] ?? '';
+        });
+        
+        debugPrint('📱 Branch details fetched: $branchName, $branchPhone');
+      }
+    } catch (e) {
+      debugPrint('Error fetching branch details: $e');
     }
   }
 
@@ -756,7 +785,7 @@ class _BalanceScreenState extends State<BalanceScreen>
                 ),
               ),
               Text(
-                "Kinniya 02 • 0755354023",
+                branchPhone.isNotEmpty ? "$branchName • $branchPhone" : "Branch Details",
                 style: GoogleFonts.poppins(
                   fontSize: 12,
                   color: AppColors.lightTextSecondary,
@@ -769,6 +798,7 @@ class _BalanceScreenState extends State<BalanceScreen>
               mainAxisSize: MainAxisSize.min,
               children: [
                 _buildReceiptRow("Shop", shopName),
+                _buildReceiptRow("Date", DateTime.now().toString().split('.')[0]),
                 Divider(color: AppColors.lightCardBorder),
                 _buildReceiptRow("Old Balance",
                     "LKR ${oldBalance % 1 == 0 ? oldBalance.toInt() : oldBalance} "),
@@ -835,9 +865,10 @@ class _BalanceScreenState extends State<BalanceScreen>
                         builder: (context) => Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text("Pegas Flex\nKinniya 02\n0755354023"),
+                            Text("Pegas Flex\n$branchName\n$branchPhone"),
                             const Divider(),
                             Text("Shop: $shopName"),
+                            Text("Date: ${DateTime.now().toString().split('.')[0]}"),
                             const SizedBox(height: 10),
                             Text(
                                 "Old Balance: LKR ${oldBalance % 1 == 0 ? oldBalance.toInt() : oldBalance}"),
