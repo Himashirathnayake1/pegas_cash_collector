@@ -5,8 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../services/mock_data_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/app_theme.dart';
+import '../services/branch_context.dart';
 
 class AddReceipts extends StatefulWidget {
   final String? stockId;
@@ -21,10 +22,10 @@ class _AddReceiptsState extends State<AddReceipts>
     with TickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _amountController = TextEditingController();
+  final firestore = FirebaseFirestore.instance;
   File? _imageFile;
   String? _imageUrl;
   bool _isUploading = false;
-  final mockService = MockDataService();
 
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
@@ -191,23 +192,71 @@ class _AddReceiptsState extends State<AddReceipts>
   Future<void> _saveReceipts() async {
     if (!_formKey.currentState!.validate()) return;
 
+    final branchId = BranchContext().branchId;
+    if (branchId == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ No branch ID available'),
+            backgroundColor: AppColors.errorDark,
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() => _isUploading = true);
 
-    final imageUrl = await _uploadImage();
+    try {
+      final imageUrl = await _uploadImage();
 
-    mockService.addReceipt(_amountController.text.trim(), imageUrl);
+      final receiptData = {
+        'amount': _amountController.text.trim(),
+        'imageUrl': imageUrl,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
 
-    setState(() => _isUploading = false);
+      final docRef = firestore
+          .collection('branches')
+          .doc(branchId)
+          .collection('receipts');
 
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content:
-              Text('Receipt saved successfully!', style: GoogleFonts.poppins()),
-          backgroundColor: AppColors.success,
-        ),
-      );
-      Navigator.pop(context);
+      if (widget.stockId != null) {
+        await docRef.doc(widget.stockId).update(receiptData);
+        print('✅ Receipt updated: ${widget.stockId}');
+      } else {
+        await docRef.add(receiptData);
+        print('✅ Receipt created');
+      }
+
+      setState(() => _isUploading = false);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              widget.stockId != null
+                  ? '✅ Receipt updated successfully!'
+                  : '✅ Receipt saved successfully!',
+              style: GoogleFonts.poppins(),
+            ),
+            backgroundColor: AppColors.success,
+          ),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      print('❌ Error saving receipt: $e');
+      setState(() => _isUploading = false);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error: $e'),
+            backgroundColor: AppColors.errorDark,
+          ),
+        );
+      }
     }
   }
 

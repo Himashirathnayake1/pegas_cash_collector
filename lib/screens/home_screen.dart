@@ -7,6 +7,7 @@ import 'package:pegas_cashcollector/screens/codeEntryScreen.dart';
 import 'package:pegas_cashcollector/screens/stocklist.dart';
 import 'package:pegas_cashcollector/screens/termsandconditions.dart';
 import 'package:pegas_cashcollector/screens/achievements_screen.dart';
+import 'package:pegas_cashcollector/screens/route_shops_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -14,6 +15,7 @@ import 'low_level_shops_screen.dart';
 import '../services/mock_data_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/app_theme.dart';
+import '../services/branch_context.dart';
 
 class RoutePage extends StatefulWidget {
   final String selectedArea;
@@ -40,10 +42,9 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
   double targetCollectAmount = 0.0;
   final mockService = MockDataService();
 
-  // Shop list variables
-  List<Map<String, dynamic>> allShops = [];
-  bool showUnpaid = true;
-  bool isShopsLoading = true;
+  // Routes list variables
+  List<Map<String, dynamic>> allRoutes = [];
+  bool isRoutesLoading = true;
   Timer? _uiUpdateTimer;
 
   late AnimationController _fadeController;
@@ -53,7 +54,8 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _loadMockData();
-    _loadShops();
+    _fetchDailyTarget();
+    _loadRoutes();
     _startUiUpdater();
     _fadeController = AnimationController(
       vsync: this,
@@ -85,140 +87,124 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
       totalPaidAcrossRoutes = mockService.latestTotalPaid;
       totalPaidTodayAmount = mockService.todayTotalPaid;
       totalPaidThisWeekAmount = mockService.getWeekPaid();
-      targetCollectAmount = mockService.targetWeekAmount;
+      // targetCollectAmount is now fetched from Firestore
     });
+  }
+
+  Future<void> _fetchDailyTarget() async {
+    try {
+      final branchId = BranchContext().branchId;
+      print('📊 Fetching daily target for branch: $branchId');
+
+      final firestore = FirebaseFirestore.instance;
+      final targetDoc = await firestore
+          .collection('branches')
+          .doc(branchId)
+          .collection('admin')
+          .doc('stats')
+          .get();
+
+      if (targetDoc.exists) {
+        final data = targetDoc.data();
+        final target = data?['cashcollector_target'];
+        
+        setState(() {
+          targetCollectAmount = (target is num) ? target.toDouble() : 0.0;
+        });
+        print('✅ Daily target loaded: Rs. $targetCollectAmount');
+      } else {
+        print('⚠️ Target document not found');
+        setState(() {
+          targetCollectAmount = mockService.targetWeekAmount;
+        });
+      }
+    } catch (e) {
+      print('❌ Error fetching daily target: $e');
+      setState(() {
+        targetCollectAmount = mockService.targetWeekAmount;
+      });
+    }
   }
 
   Future<void> _refreshData() async {
     setState(() {
       isUploading = true;
     });
-    await _loadShops();
+    await _loadRoutes();
     _loadMockData();
+    await _fetchDailyTarget();
     setState(() {
       isUploading = false;
     });
   }
 
-  Future<void> _loadShops() async {
-    setState(() => isShopsLoading = true);
+  Future<void> _loadRoutes() async {
+    setState(() => isRoutesLoading = true);
 
     try {
       await Future.delayed(const Duration(milliseconds: 300));
 
       final firestore = FirebaseFirestore.instance;
-      final updatedShops = <Map<String, dynamic>>[];
-      final now = DateTime.now();
+      final updatedRoutes = <Map<String, dynamic>>[];
+      
+      // Get branch ID from context
+      final branchId = BranchContext().branchId;
+      if (branchId == null) {
+        print('❌ No branch ID available in context');
+        setState(() => isRoutesLoading = false);
+        return;
+      }
 
-      // Get all routes
-      final routesSnap = await firestore.collection('routes').get();
+      print('📍 Loading routes for branch: $branchId');
+
+      // Get all routes for this branch
+      final routesSnap = await firestore
+          .collection('branches')
+          .doc(branchId)
+          .collection('routes')
+          .get();
+          
       if (routesSnap.docs.isEmpty) {
-        // Fallback to mock if no routes in Firestore
-        final shops = mockService.getShopsForRoute(widget.selectedArea);
-        for (var shop in shops) {
-          String status = shop.status;
-          if (status == 'Paid' && shop.paidAt != null) {
-            final difference = now.difference(shop.paidAt!).inSeconds;
-            if (difference >= 43200) {
-              mockService.revertShopToUnpaid(widget.selectedArea, shop.id);
-              status = 'Unpaid';
-            }
-          }
-
-          updatedShops.add({
-            "id": shop.id,
-            "name": shop.name,
-            "address": shop.address,
-            "phone": shop.phone,
-            "status": status,
-            "amount": shop.amount,
-            "totalPaid": shop.totalPaid,
-            "paidAmount": shop.paidAmount ?? 0,
-            "paidAt": shop.paidAt,
-            "latitude": shop.latitude,
-            "longitude": shop.longitude,
-          });
-        }
+        print('⚠️ No routes found for branch $branchId');
+        updatedRoutes.add({
+          'id': 'default',
+          'name': 'Default Route',
+          'shopCount': 0,
+        });
       } else {
         for (var routeDoc in routesSnap.docs) {
-          final subroutes = await routeDoc.reference.collection('subroutes').get();
-          for (var sub in subroutes.docs) {
-            final shopsSnap = await sub.reference.collection('shops').get();
-            for (var shopDoc in shopsSnap.docs) {
-              final data = shopDoc.data();
-              String status = (data['status'] as String?) ?? 'Unpaid';
-              DateTime? paidAt;
-              if (data['paidAt'] != null) {
-                final v = data['paidAt'];
-                if (v is Timestamp) paidAt = v.toDate();
-                else if (v is DateTime) paidAt = v;
-              }
+          int shopCount = 0;
+          // Count shops in this route
+          final shopsSnap = await firestore
+              .collection('branches')
+              .doc(branchId)
+              .collection('routes')
+              .doc(routeDoc.id)
+              .collection('shops')
+              .get();
+          shopCount = shopsSnap.docs.length;
 
-              if (status == 'Paid' && paidAt != null) {
-                final difference = now.difference(paidAt).inSeconds;
-                if (difference >= 43200) {
-                  status = 'Unpaid';
-                }
-              }
-
-              updatedShops.add({
-                'id': shopDoc.id,
-                'name': data['name'] ?? '',
-                'address': data['address'] ?? '',
-                'phone': data['phone'] ?? '',
-                'status': status,
-                'amount': data['amount'] ?? 0,
-                'totalPaid': data['totalPaid'] ?? 0,
-                'paidAmount': data['paidAmount'] ?? 0,
-                'paidAt': paidAt,
-                'latitude': data['latitude'],
-                'longitude': data['longitude'],
-                'routeId': routeDoc.id,
-                'subrouteId': sub.id,
-              });
-            }
-          }
+          updatedRoutes.add({
+            'id': routeDoc.id,
+            'name': routeDoc.data()['name'] ?? routeDoc.id,
+            'shopCount': shopCount,
+          });
+          
+          print('✅ Loaded route: ${routeDoc.id} with $shopCount shops');
         }
       }
 
       setState(() {
-        allShops = updatedShops;
+        allRoutes = updatedRoutes;
       });
     } catch (e) {
-      // On error, fallback to mock data
-      final shops = mockService.getShopsForRoute(widget.selectedArea);
-      final updatedShops = <Map<String, dynamic>>[];
-      final now = DateTime.now();
-      for (var shop in shops) {
-        String status = shop.status;
-        if (status == 'Paid' && shop.paidAt != null) {
-          final difference = now.difference(shop.paidAt!).inSeconds;
-          if (difference >= 43200) {
-            mockService.revertShopToUnpaid(widget.selectedArea, shop.id);
-            status = 'Unpaid';
-          }
-        }
-
-        updatedShops.add({
-          "id": shop.id,
-          "name": shop.name,
-          "address": shop.address,
-          "phone": shop.phone,
-          "status": status,
-          "amount": shop.amount,
-          "totalPaid": shop.totalPaid,
-          "paidAmount": shop.paidAmount ?? 0,
-          "paidAt": shop.paidAt,
-          "latitude": shop.latitude,
-          "longitude": shop.longitude,
-        });
-      }
-
+      print('❌ Error loading routes: $e');
+      // On error, fallback to empty list
       setState(() {
-        allShops = updatedShops;
+        allRoutes = [];
       });
     } finally {
-      if (mounted) setState(() => isShopsLoading = false);
+      if (mounted) setState(() => isRoutesLoading = false);
     }
   }
 
@@ -232,17 +218,6 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    // Filter shops based on search and status
-    List<Map<String, dynamic>> filteredShops = allShops.where((shop) {
-      final matchStatus =
-          showUnpaid ? shop['status'] == 'Unpaid' : shop['status'] == 'Paid';
-      final matchSearch = shop['name']
-          .toLowerCase()
-          .contains(_searchController.text.toLowerCase());
-      final hasValidAmount = showUnpaid || shop['amount'] != null;
-      return matchStatus && matchSearch && hasValidAmount;
-    }).toList();
-
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: AppColors.lightBackground,
@@ -257,21 +232,9 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
               children: [
                 _buildAppBar(),
                 // Search and Filter
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    children: [
-                      const SizedBox(height: 16),
-                      _buildSearchBar(),
-                      const SizedBox(height: 12),
-                      _buildFilterTabs(),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                // Shop List
+                // Routes List
                 Expanded(
-                  child: isShopsLoading
+                  child: isRoutesLoading
                       ? Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -282,7 +245,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                               ),
                               const SizedBox(height: 16),
                               Text(
-                                'Loading shops...',
+                                'Loading routes...',
                                 style: GoogleFonts.poppins(
                                   color: AppColors.lightTextSecondary,
                                 ),
@@ -293,9 +256,9 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                       : RefreshIndicator(
                           onRefresh: _refreshData,
                           color: AppColors.accentTealDark,
-                          child: filteredShops.isEmpty
+                          child: allRoutes.isEmpty
                               ? _buildEmptyState()
-                              : _buildShopsList(filteredShops),
+                              : _buildRoutesList(allRoutes),
                         ),
                 ),
                 // Fixed bottom target card
@@ -348,7 +311,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                   ),
                 ),
                 Text(
-                  '${allShops.length} Shops',
+                  '${allRoutes.length} Routes',
                   style: GoogleFonts.poppins(
                     fontSize: 12,
                     color: AppColors.lightTextSecondary,
@@ -487,9 +450,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                         title: 'Home',
                         onTap: () {
                           Navigator.pop(context);
-                          setState(() {
-                            showUnpaid = true;
-                          });
+                          // showUnpaid reset removed - now using route view
                         },
                         fontSize: menuItemFontSize,
                         iconSize: menuIconSize,
@@ -715,95 +676,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
         ),
       ),
     );
-  }
-
-  Widget _buildSearchBar() {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.lightSurface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.lightCardBorder),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: TextField(
-        controller: _searchController,
-        onChanged: (_) => setState(() {}),
-        style: GoogleFonts.poppins(color: AppColors.lightTextPrimary),
-        decoration: InputDecoration(
-          hintText: 'Search shops...',
-          hintStyle: GoogleFonts.poppins(color: AppColors.lightTextMuted),
-          prefixIcon:
-              const Icon(Icons.search_rounded, color: AppColors.lightTextMuted),
-          border: InputBorder.none,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFilterTabs() {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppColors.lightSurface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.lightCardBorder),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _buildFilterTab('Unpaid', showUnpaid, () {
-              setState(() => showUnpaid = true);
-            }),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _buildFilterTab('Paid', !showUnpaid, () {
-              setState(() => showUnpaid = false);
-            }),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFilterTab(String label, bool isActive, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          gradient: isActive
-              ? LinearGradient(
-                  colors: label == 'Unpaid'
-                      ? [AppColors.accentBlueDark, AppColors.accentTealDark]
-                      : [AppColors.successDark, AppColors.success],
-                )
-              : null,
-          color: isActive ? null : AppColors.lightBackground,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: GoogleFonts.poppins(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: isActive ? Colors.white : AppColors.lightTextMuted,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  }  // Search and filter methods removed - now using route view instead of shop view
 
   Widget _buildEmptyState() {
     return Center(
@@ -811,17 +684,15 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
         shrinkWrap: true,
         children: [
           const SizedBox(height: 60),
-          Icon(
-            showUnpaid
-                ? Icons.check_circle_outline_rounded
-                : Icons.store_outlined,
+          const Icon(
+            Icons.route,
             size: 64,
             color: AppColors.lightTextMuted,
           ),
           const SizedBox(height: 16),
           Center(
             child: Text(
-              showUnpaid ? 'All shops are paid!' : 'No paid shops yet',
+              'No routes found',
               style: GoogleFonts.poppins(
                 fontSize: 16,
                 color: AppColors.lightTextSecondary,
@@ -830,6 +701,118 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildRoutesList(List<Map<String, dynamic>> routes) {
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      itemCount: routes.length,
+      itemBuilder: (context, index) {
+        final route = routes[index];
+        return _buildRouteCard(route, index);
+      },
+    );
+  }
+
+  Widget _buildRouteCard(Map<String, dynamic> route, int index) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: Duration(milliseconds: 300 + (index * 50)),
+      builder: (context, value, child) {
+        return Transform.translate(
+          offset: Offset(0, 20 * (1 - value)),
+          child: Opacity(
+            opacity: value,
+            child: child,
+          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => RouteShopsScreen(
+                    routeId: route['id'],
+                    routeName: route['name'],
+                  ),
+                ),
+              );
+            },
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0D2137),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: const Color(0xFF1A3A5C),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF0D2137).withOpacity(0.5),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  // Route Icon
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.accentTeal.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.route,
+                      color: AppColors.accentTeal,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  // Route Info
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          route['name'] ?? 'Unknown Route',
+                          style: GoogleFonts.poppins(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${route['shopCount']} shops',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: AppColors.lightTextSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Arrow Icon
+                  Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    color: AppColors.accentTeal,
+                    size: 16,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -885,26 +868,23 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                     routeName: widget.selectedArea,
                     shopId: shop['id'],
                     onBalanceAdjusted: (shopName, reducedAmount) async {
-                      final updatedShops =
-                          List<Map<String, dynamic>>.from(allShops);
-                      final shopIndex =
-                          updatedShops.indexWhere((s) => s['name'] == shopName);
-                      if (shopIndex != -1) {
-                        final shopId = updatedShops[shopIndex]['id'];
-                        final currentAmount = updatedShops[shopIndex]['amount'];
-                        final newAmount = currentAmount - reducedAmount;
+                      // allShops reference removed - this method is no longer used
+                      // final updatedShops =
+                      //     List<Map<String, dynamic>>.from(allShops);
+                      // final shopIndex =
+                      //     updatedShops.indexWhere((s) => s['name'] == shopName);
+                      // if (shopIndex != -1) {
+                      //   final shopId = updatedShops[shopIndex]['id'];
+                      //   final currentAmount = updatedShops[shopIndex]['amount'];
+                      //   final newAmount = currentAmount - reducedAmount;
 
-                        mockService.updateShopBalance(
-                          widget.selectedArea, shopId, reducedAmount);
+                      //   mockService.updateShopBalance(
+                      //     widget.selectedArea, shopId, reducedAmount);
 
-                        setState(() {
-                          updatedShops[shopIndex]['status'] = 'Paid';
-                          updatedShops[shopIndex]['amount'] = newAmount;
-                          updatedShops[shopIndex]['paidAt'] = DateTime.now();
-                          updatedShops[shopIndex]['paidAmount'] = reducedAmount;
-                          allShops = updatedShops;
-                        });
-                      }
+                        // setState(() {
+                        //   // allShops = updatedShops; // removed - method no longer used
+                        // });
+                      // }
                     },
                   ),
                 ),
@@ -1187,26 +1167,26 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                   ],
                 ),
               ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: progress >= 1
-                      ? AppColors.successDark.withOpacity(0.15)
-                      : AppColors.accentBlueDark.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '${(progress * 100)}%',
-                  style: GoogleFonts.poppins(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: progress >= 1
-                        ? AppColors.successDark
-                        : AppColors.accentBlueDark,
-                  ),
-                ),
-              ),
+              // Container(
+              //   padding:
+              //       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              //   decoration: BoxDecoration(
+              //     color: progress >= 1
+              //         ? AppColors.successDark.withOpacity(0.15)
+              //         : AppColors.accentBlueDark.withOpacity(0.15),
+              //     borderRadius: BorderRadius.circular(20),
+              //   ),
+              //   child: Text(
+              //     '${(progress * 100)}%',
+              //     style: GoogleFonts.poppins(
+              //       fontSize: 14,
+              //       fontWeight: FontWeight.w700,
+              //       color: progress >= 1
+              //           ? AppColors.successDark
+              //           : AppColors.accentBlueDark,
+              //     ),
+              //   ),
+              // ),
             ],
           ),
           const SizedBox(height: 16),

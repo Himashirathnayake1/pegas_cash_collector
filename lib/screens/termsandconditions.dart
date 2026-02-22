@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../services/branch_context.dart';
 import '../utils/app_theme.dart';
 
 class TermsAndConditionsPage extends StatelessWidget {

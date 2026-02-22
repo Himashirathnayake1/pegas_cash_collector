@@ -1,8 +1,9 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../services/mock_data_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/app_theme.dart';
+import '../services/branch_context.dart';
 
 class CollectorStockListPage extends StatefulWidget {
   const CollectorStockListPage({super.key});
@@ -13,9 +14,11 @@ class CollectorStockListPage extends StatefulWidget {
 
 class _CollectorStockListPageState extends State<CollectorStockListPage>
     with TickerProviderStateMixin {
-  final mockService = MockDataService();
+  final firestore = FirebaseFirestore.instance;
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
+  List<DocumentSnapshot> products = [];
+  bool isLoading = true;
 
   @override
   void initState() {
@@ -26,6 +29,40 @@ class _CollectorStockListPageState extends State<CollectorStockListPage>
     )..forward();
     _fadeAnimation =
         CurvedAnimation(parent: _fadeController, curve: Curves.easeOut);
+    _fetchProducts();
+  }
+
+  /// Fetch all products from Firestore
+  Future<void> _fetchProducts() async {
+    try {
+      setState(() => isLoading = true);
+      print('🔄 Fetching products from Firestore...');
+      
+      final branchId = BranchContext().branchId;
+      if (branchId == null) {
+        print('❌ No branch ID available');
+        setState(() => isLoading = false);
+        return;
+      }
+      
+      print('📂 Branch ID: $branchId');
+      
+      final snapshot = await firestore
+          .collection('branches')
+          .doc(branchId)
+          .collection('products')
+          .get();
+      
+      print('✅ Fetched ${snapshot.docs.length} products');
+      
+      setState(() {
+        products = snapshot.docs;
+        isLoading = false;
+      });
+    } catch (e) {
+      print('❌ Error fetching products: $e');
+      setState(() => isLoading = false);
+    }
   }
 
   @override
@@ -36,8 +73,6 @@ class _CollectorStockListPageState extends State<CollectorStockListPage>
 
   @override
   Widget build(BuildContext context) {
-    final stocks = mockService.getStocks();
-
     return Scaffold(
       backgroundColor: AppColors.lightBackground,
       resizeToAvoidBottomInset: true,
@@ -50,14 +85,24 @@ class _CollectorStockListPageState extends State<CollectorStockListPage>
               children: [
                 _buildAppBar(),
                 Expanded(
-                  child: stocks.isEmpty
-                      ? _buildEmptyState()
-                      : _buildStockList(stocks),
+                  child: isLoading
+                      ? _buildLoadingState()
+                      : products.isEmpty
+                          ? _buildEmptyState()
+                          : _buildStockList(products),
                 ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return const Center(
+      child: CircularProgressIndicator(
+        color: AppColors.accentTealDark,
       ),
     );
   }
@@ -100,7 +145,7 @@ class _CollectorStockListPageState extends State<CollectorStockListPage>
                   ),
                 ),
                 Text(
-                  '${mockService.getStocks().length} items available',
+                  '${products.length} items available',
                   style: GoogleFonts.poppins(
                     fontSize: 12,
                     color: AppColors.lightTextSecondary,
@@ -151,19 +196,26 @@ class _CollectorStockListPageState extends State<CollectorStockListPage>
     );
   }
 
-  Widget _buildStockList(List stocks) {
+  Widget _buildStockList(List<DocumentSnapshot> productList) {
     return ListView.builder(
       padding: const EdgeInsets.all(20),
-      itemCount: stocks.length,
+      itemCount: productList.length,
       itemBuilder: (context, index) {
-        final stock = stocks[index];
-        return _buildStockCard(stock, index);
+        final productDoc = productList[index];
+        return _buildStockCard(productDoc, index);
       },
     );
   }
 
-  Widget _buildStockCard(dynamic stock, int index) {
-    final isAvailable = stock.isAvailable;
+  Widget _buildStockCard(DocumentSnapshot productDoc, int index) {
+    final productData = productDoc.data() as Map<String, dynamic>;
+    
+    final name = productData['name'] ?? 'Unknown';
+    final imageUrl = productData['imageUrl'] ?? '';
+    final originalPrice = productData['originalPrice'] ?? 0;
+    final normalShopsPrice = productData['normalShopsPrice'] ?? 0;
+    final stock = productData['stock'] ?? 0;
+    final isAvailable = (stock as num) > 0;
 
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.0, end: 1.0),
@@ -207,9 +259,9 @@ class _CollectorStockListPageState extends State<CollectorStockListPage>
                   color: AppColors.lightBackground,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: stock.imageUrl.isNotEmpty
+                child: imageUrl.isNotEmpty
                     ? Image.network(
-                        stock.imageUrl,
+                        imageUrl,
                         fit: BoxFit.cover,
                         loadingBuilder: (context, child, loadingProgress) {
                           if (loadingProgress == null) return child;
@@ -237,7 +289,7 @@ class _CollectorStockListPageState extends State<CollectorStockListPage>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    stock.name,
+                    name,
                     style: GoogleFonts.poppins(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -245,12 +297,9 @@ class _CollectorStockListPageState extends State<CollectorStockListPage>
                     ),
                   ),
                   const SizedBox(height: 8),
-                  _buildPriceRow('Original', stock.originalPrice,
-                      AppColors.lightTextMuted),
-                  _buildPriceRow('Discounted', stock.discountedPrice,
-                      AppColors.accentTealDark),
-                  _buildPriceRow('Last Lowest', stock.lastLowerPrice,
-                      AppColors.warningDark),
+                  _buildPriceRow('Original', originalPrice, AppColors.lightTextMuted),
+                  _buildPriceRow('Store Price', normalShopsPrice, AppColors.accentTealDark),
+                  _buildStockRow('Stock', stock),
                 ],
               ),
             ),
@@ -311,6 +360,31 @@ class _CollectorStockListPageState extends State<CollectorStockListPage>
               fontSize: 12,
               fontWeight: FontWeight.w600,
               color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStockRow(String label, dynamic quantity) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Row(
+        children: [
+          Text(
+            '$label: ',
+            style: GoogleFonts.poppins(
+              fontSize: 12,
+              color: AppColors.lightTextMuted,
+            ),
+          ),
+          Text(
+            '${quantity ?? 0}',
+            style: GoogleFonts.poppins(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.accentBlueDark,
             ),
           ),
         ],

@@ -1,11 +1,12 @@
 import 'dart:ui';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bluetooth_printer/flutter_bluetooth_printer.dart'
     as printer;
 import 'package:google_fonts/google_fonts.dart';
 import 'package:geolocator/geolocator.dart';
-import '../services/mock_data_service.dart';
 import '../utils/app_theme.dart';
+import '../services/branch_context.dart';
 
 class BalanceScreen extends StatefulWidget {
   final String shopName;
@@ -30,12 +31,13 @@ class _BalanceScreenState extends State<BalanceScreen>
   printer.ReceiptController? _receiptController;
 
   double? balanceAmount;
+  double? creditLimit;
   bool _isProcessing = false;
   double? shopLatitude;
   double? shopLongitude;
 
   List<Map<String, dynamic>> transactions = [];
-  final mockService = MockDataService();
+  final firestore = FirebaseFirestore.instance;
 
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
@@ -59,31 +61,423 @@ class _BalanceScreenState extends State<BalanceScreen>
   }
 
   Future<void> _fetchBalance() async {
-    await Future.delayed(const Duration(milliseconds: 200));
+    try {
+      final branchId = BranchContext().branchId;
+      
+      // Build shop reference with branch context
+      final shopRef = firestore
+          .collection('branches')
+          .doc(branchId)
+          .collection('routes')
+          .doc(widget.routeName)
+          .collection('shops')
+          .doc(widget.shopId);
 
-    final shops = mockService.getShopsForRoute(widget.routeName);
-    final shop = shops.firstWhere((s) => s.id == widget.shopId,
-        orElse: () => shops.first);
+      // Fetch shop document
+      final shopDoc = await shopRef.get();
 
+      if (!shopDoc.exists) {
+        debugPrint('Shop not found: ${widget.shopId}');
+        return;
+      }
+
+      final shopData = shopDoc.data() ?? {};
+
+      // Safely convert amount to double (match CashCollector field name)
+      double amount = 0.0;
+      final amountValue = shopData['amount'];
+      if (amountValue is double) {
+        amount = amountValue;
+      } else if (amountValue is int) {
+        amount = amountValue.toDouble();
+      } else if (amountValue is String) {
+        amount = double.tryParse(amountValue) ?? 0.0;
+      }
+
+      // Safely convert latitude to double
+      double latitude = 0.0;
+      final latValue = shopData['latitude'];
+      if (latValue is double) {
+        latitude = latValue;
+      } else if (latValue is int) {
+        latitude = latValue.toDouble();
+      } else if (latValue is String) {
+        latitude = double.tryParse(latValue) ?? 0.0;
+      }
+
+      // Safely convert longitude to double
+      double longitude = 0.0;
+      final longValue = shopData['longitude'];
+      if (longValue is double) {
+        longitude = longValue;
+      } else if (longValue is int) {
+        longitude = longValue.toDouble();
+      } else if (longValue is String) {
+        longitude = double.tryParse(longValue) ?? 0.0;
+      }
+
+      // Safely convert creditLimit to double
+      double creditLimitValue = 50000.0;
+      final creditLimitData = shopData['creditLimit'];
+      if (creditLimitData is double) {
+        creditLimitValue = creditLimitData;
+      } else if (creditLimitData is int) {
+        creditLimitValue = creditLimitData.toDouble();
+      } else if (creditLimitData is String) {
+        creditLimitValue = double.tryParse(creditLimitData) ?? 50000.0;
+      }
+
+      setState(() {
+        balanceAmount = amount;
+        creditLimit = creditLimitValue;
+        shopLatitude = latitude;
+        shopLongitude = longitude;
+      });
+
+      // Fetch transactions for this shop (matching CashCollector pattern)
+      final txSnapshot = await shopRef
+          .collection('transactions')
+          .orderBy('timestamp', descending: true)
+          .get();
+
+      debugPrint('Transaction docs fetched: ${txSnapshot.docs.length}');
+
+      // Filter transactions where type == 'paid' OR type is missing (like CashCollector)
+      final txList = txSnapshot.docs.where((doc) {
+        final type = doc.data()['type'];
+        return type == 'paid' || type == null;
+      }).map<Map<String, dynamic>>((doc) {
+        final data = doc.data();
+        double txAmount = 0.0;
+        final txAmountValue = data['amount'];
+        if (txAmountValue is double) {
+          txAmount = txAmountValue;
+        } else if (txAmountValue is int) {
+          txAmount = txAmountValue.toDouble();
+        } else if (txAmountValue is String) {
+          txAmount = double.tryParse(txAmountValue) ?? 0.0;
+        }
+
+        return {
+          'time': (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
+          'amount': txAmount,
+          'type': data['type'] ?? 'Cash',
+          'store': widget.shopName,
+        };
+      }).toList();
+
+      setState(() {
+        transactions = txList;
+      });
+    } catch (e) {
+      debugPrint('Error fetching balance: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading balance: $e'),
+          backgroundColor: AppColors.errorDark,
+        ),
+      );
+    }
+  }
+
+  // Product ordering - Show order dialog with product selection
+  final List<String> products = [
+    'Cup Juice',
+    'Sweet Bottles',
+    'Milk pack',
+    'Soft Drinks',
+  ];
+  List<String> selectedProducts = [];
+
+  void _showOrderDialog() {
     setState(() {
-      balanceAmount = shop.amount;
-      shopLatitude = shop.latitude;
-      shopLongitude = shop.longitude;
+      selectedProducts = []; // Reset selection
     });
 
-    final txList =
-        shop.transactions.where((tx) => tx.type != 'Credit').map((tx) {
-      return {
-        'time': tx.timestamp,
-        'amount': tx.amount,
-        'type': tx.type,
-        'store': widget.shopName,
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: const Text("Order Products"),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      "Select products to order:",
+                      style: TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: products.map((product) {
+                        final isSelected = selectedProducts.contains(product);
+                        return FilterChip(
+                          selected: isSelected,
+                          label: Text(product),
+                          selectedColor: Colors.blueGrey.withOpacity(0.2),
+                          showCheckmark: false,
+                          onSelected: (val) {
+                            setStateDialog(() {
+                              if (val) {
+                                selectedProducts.add(product);
+                              } else {
+                                selectedProducts.remove(product);
+                              }
+                            });
+                          },
+                          avatar: isSelected
+                              ? const Icon(Icons.check,
+                                  size: 18, color: Colors.blueGrey)
+                              : const SizedBox.shrink(),
+                          backgroundColor: Colors.grey[200],
+                          labelStyle: const TextStyle(color: Colors.black),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text(
+                    "Cancel",
+                    style: TextStyle(color: Colors.black),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: _isProcessing
+                      ? null
+                      : () async {
+                          if (selectedProducts.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text(
+                                      "Please select at least one product")),
+                            );
+                            return;
+                          }
+
+                          setStateDialog(() {
+                            _isProcessing = true;
+                          });
+
+                          await _placeOrder();
+
+                          setStateDialog(() {
+                            _isProcessing = false;
+                          });
+
+                          Navigator.pop(context);
+                        },
+                  child: _isProcessing
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          "Order",
+                          style: TextStyle(color: Colors.orange),
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // Place order to Firestore
+  Future<void> _changeShopOrder() async {
+    final branchId = BranchContext().branchId;
+    
+    // Build shop reference with branch context
+    final shopRef = firestore
+        .collection('branches')
+        .doc(branchId)
+        .collection('routes')
+        .doc(widget.routeName)
+        .collection('shops')
+        .doc(widget.shopId);
+
+    try {
+      // Fetch current order number
+      final shopDoc = await shopRef.get();
+      final data = shopDoc.data() as Map<String, dynamic>?;
+      final currentOrderNumber = (data?['orderNumber'])?.toString() ?? '';
+
+      final TextEditingController controller = TextEditingController(
+        text: currentOrderNumber.isNotEmpty ? currentOrderNumber : '',
+      );
+
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text("Change Shop Order"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Current Order Number: ${currentOrderNumber.isNotEmpty ? '#$currentOrderNumber' : 'Not set'}",
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: controller,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: "New Order Number",
+                    hintText: "Enter new order number",
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel"),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  final orderNumber = int.tryParse(controller.text);
+                  if (orderNumber == null || orderNumber < 1) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text("Please enter a valid order number"),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                    return;
+                  }
+
+                  try {
+                    // Update order number in Firestore
+                    await shopRef.update({'orderNumber': orderNumber});
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                            "✅ Order updated to #$orderNumber for ${widget.shopName}"),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+
+                    Navigator.pop(context);
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text("Error updating order: $e"),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                },
+                child: const Text("Update"),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Error fetching order number: $e"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _placeOrder() async {
+    try {
+      final branchId = BranchContext().branchId;
+      
+      // Get current location
+      String? currentLatitude;
+      String? currentLongitude;
+
+      try {
+        bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+        if (serviceEnabled) {
+          LocationPermission permission = await Geolocator.checkPermission();
+          if (permission != LocationPermission.denied &&
+              permission != LocationPermission.deniedForever) {
+            Position position = await Geolocator.getCurrentPosition(
+              desiredAccuracy: LocationAccuracy.high,
+            );
+            currentLatitude = position.latitude.toString();
+            currentLongitude = position.longitude.toString();
+          }
+        }
+      } catch (e) {
+        // Continue without location if there's an error
+        debugPrint("Location error: $e");
+      }
+
+      Map<String, dynamic> orderData = {
+        "type": "remainingShop",
+        "shopName": widget.shopName,
+        "shopId": widget.shopId,
+        "routeName": widget.routeName,
+        "submittedAt": FieldValue.serverTimestamp(),
+        "products": selectedProducts,
       };
-    }).toList();
 
-    setState(() {
-      transactions = txList.reversed.toList();
-    });
+      // Add location data if available
+      if (currentLatitude != null && currentLongitude != null) {
+        orderData["location"] = {
+          "latitude": currentLatitude,
+          "longitude": currentLongitude,
+          "timestamp": DateTime.now().toIso8601String(),
+        };
+      }
+
+      // Save order to branch-isolated collection
+      await firestore
+          .collection('branches')
+          .doc(branchId)
+          .collection('orders')
+          .add(orderData);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(currentLatitude != null
+              ? "✅ Order placed with location for ${widget.shopName}"
+              : "✅ Order placed for ${widget.shopName}"),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      setState(() {
+        selectedProducts = [];
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Error placing order: $e"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   void _showAdjustDialog() {
@@ -202,7 +596,7 @@ class _BalanceScreenState extends State<BalanceScreen>
                           final double? reduction = double.tryParse(input);
 
                           if (reduction != null &&
-                              reduction > 0 &&
+                              reduction > 299 &&
                               reduction <= (balanceAmount ?? 0)) {
                             setStateDialog(() {
                               _isProcessing = true;
@@ -212,7 +606,46 @@ class _BalanceScreenState extends State<BalanceScreen>
                             final newBalance = oldBalance - reduction;
 
                             try {
-                              // Update via callback (which updates mockService)
+                              final branchId = BranchContext().branchId;
+
+                              // Update balance in Firestore with comprehensive fields (CashCollector pattern)
+                              final updateData = {
+                                'amount': newBalance,  // Match CashCollector field name
+                                'status': newBalance == 0 ? 'Unpaid' : 'Paid',
+                                'paidAmount': reduction,
+                                'totalPaid': FieldValue.increment(reduction),
+                              };
+
+                              if (newBalance > 0) {
+                                updateData['paidAt'] = FieldValue.serverTimestamp();
+                              }
+
+                              await firestore
+                                  .collection('branches')
+                                  .doc(branchId)
+                                  .collection('routes')
+                                  .doc(widget.routeName)
+                                  .collection('shops')
+                                  .doc(widget.shopId)
+                                  .update(updateData);
+
+                              // Add transaction record in Firestore
+                              await firestore
+                                  .collection('branches')
+                                  .doc(branchId)
+                                  .collection('routes')
+                                  .doc(widget.routeName)
+                                  .collection('shops')
+                                  .doc(widget.shopId)
+                                  .collection('transactions')
+                                  .add({
+                                'amount': reduction,
+                                'type': 'paid',
+                                'timestamp': FieldValue.serverTimestamp(),
+                                'description': 'Payment collection',
+                              });
+
+                              // Update via callback for parent screen
                               widget.onBalanceAdjusted(
                                   widget.shopName, reduction);
 
@@ -250,7 +683,9 @@ class _BalanceScreenState extends State<BalanceScreen>
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(
-                                  "Invalid amount entered",
+                                  reduction != null && reduction <= 299
+                                      ? "Minimum amount is 300"
+                                      : "Invalid amount entered",
                                   style: GoogleFonts.poppins(),
                                 ),
                                 backgroundColor: AppColors.errorDark,
@@ -881,21 +1316,42 @@ class _BalanceScreenState extends State<BalanceScreen>
                             return;
                           }
 
-                          mockService.addFeedback(
-                              widget.routeName,
-                              widget.shopName,
-                              widget.shopId,
-                              selectedReason!,
-                              note);
+                          try {
+                            final branchId = BranchContext().branchId;
 
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Feedback submitted successfully',
-                                  style: GoogleFonts.poppins()),
-                              backgroundColor: AppColors.success,
-                            ),
-                          );
+                            // Save feedback to Firestore
+                            await firestore
+                                .collection('branches')
+                                .doc(branchId)
+                                .collection('feedback')
+                                .add({
+                              'routeName': widget.routeName,
+                              'shopName': widget.shopName,
+                              'shopId': widget.shopId,
+                              'reason': selectedReason,
+                              'note': note,
+                              'timestamp': Timestamp.now(),
+                              'status': 'open',
+                            });
+
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Feedback submitted successfully',
+                                    style: GoogleFonts.poppins()),
+                                backgroundColor: AppColors.success,
+                              ),
+                            );
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content:
+                                    Text('Error submitting feedback: $e',
+                                        style: GoogleFonts.poppins()),
+                                backgroundColor: AppColors.errorDark,
+                              ),
+                            );
+                          }
                         }
                       : () {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -1000,6 +1456,17 @@ class _BalanceScreenState extends State<BalanceScreen>
               ],
             ),
           ),
+          IconButton(
+            onPressed: _changeShopOrder,
+            icon: const Icon(Icons.sort,
+                color: AppColors.accentTealDark),
+            tooltip: "Change Shop Order",
+            style: IconButton.styleFrom(
+              backgroundColor: AppColors.accentTealDark.withOpacity(0.12),
+              padding: const EdgeInsets.all(12),
+            ),
+          ),
+          const SizedBox(width: 8),
           IconButton(
             onPressed: _fetchBalance,
             icon: const Icon(Icons.refresh_rounded,
@@ -1122,6 +1589,39 @@ class _BalanceScreenState extends State<BalanceScreen>
             ),
           ),
           const SizedBox(height: 12),
+          // Order Products Button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _showOrderDialog,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                elevation: 2,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.shopping_cart_rounded, color: Colors.white, size: 20),
+                  const SizedBox(width: 10),
+                  Text(
+                    'ORDER PRODUCTS',
+                    style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           // Feedback Button
           SizedBox(
             width: double.infinity,
@@ -1197,7 +1697,9 @@ class _BalanceScreenState extends State<BalanceScreen>
                     ),
                   ),
                   Text(
-                    '50,000 LKR',
+                    creditLimit != null
+                        ? '${(creditLimit! / 1000).toStringAsFixed(0)},000 LKR'
+                        : 'Loading...',
                     style: GoogleFonts.poppins(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,

@@ -1,160 +1,194 @@
+import 'dart:ui';
+import 'dart:async';
+import 'package:pegas_cashcollector/screens/balance_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../utils/app_theme.dart';
 import '../services/branch_context.dart';
-import 'balance_screen.dart';
 
-class LowLevelShopsScreen extends StatefulWidget {
-  const LowLevelShopsScreen({Key? key}) : super(key: key);
+class RouteShopsScreen extends StatefulWidget {
+  final String routeId;
+  final String routeName;
+
+  const RouteShopsScreen({
+    super.key,
+    required this.routeId,
+    required this.routeName,
+  });
 
   @override
-  State<LowLevelShopsScreen> createState() => _LowLevelShopsScreenState();
+  State<RouteShopsScreen> createState() => _RouteShopsScreenState();
 }
 
-class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
+class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
-  bool showUnpaid = true;
+  
   List<Map<String, dynamic>> allShops = [];
-  bool isLoading = true;
+  List<Map<String, dynamic>> filteredShops = [];
+  bool showUnpaid = true;
+  bool isShopsLoading = true;
+  Timer? _uiUpdateTimer;
+  bool isUploading = false;
+  
+  // Countdown state
   Map<String, int> countdowns = {};
+  Map<String, Timer> timers = {};
+
+  late AnimationController _fadeController;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
     super.initState();
     _loadShops();
-    _startCountdownTimer();
+    _startUiUpdater();
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..forward();
+    _fadeAnimation =
+        CurvedAnimation(parent: _fadeController, curve: Curves.easeOut);
   }
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _startCountdownTimer() {
-    Future.delayed(const Duration(seconds: 1), () {
+  void _startUiUpdater() {
+    _uiUpdateTimer?.cancel();
+    _uiUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
-        setState(() {
-          for (var shopId in countdowns.keys) {
-            if (countdowns[shopId]! > 0) {
-              countdowns[shopId] = countdowns[shopId]! - 1;
-            }
-          }
-        });
-        _startCountdownTimer();
+        setState(() {});
       }
     });
   }
 
-  Future<void> _loadShops() async {
-    try {
-      final branchId = BranchContext().branchId;
-      print('📍 Loading shops for branch: $branchId');
-      
-      final firestore = FirebaseFirestore.instance;
+  @override
+  void dispose() {
+    _fadeController.dispose();
+    _searchController.dispose();
+    _uiUpdateTimer?.cancel();
+    // Cancel all countdown timers
+    for (var timer in timers.values) {
+      timer.cancel();
+    }
+    super.dispose();
+  }
 
-      // First, get all routes
-      final routesSnapshot = await firestore
+  Future<void> _loadShops() async {
+    setState(() => isShopsLoading = true);
+
+    try {
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      final firestore = FirebaseFirestore.instance;
+      final updatedShops = <Map<String, dynamic>>[];
+      final now = DateTime.now();
+      
+      // Get branch ID from context
+      final branchId = BranchContext().branchId;
+      if (branchId == null) {
+        print('❌ No branch ID available in context');
+        setState(() => isShopsLoading = false);
+        return;
+      }
+
+      print('📍 Loading shops for branch: $branchId, route: ${widget.routeId}');
+
+      // Get shops for this specific route in this branch
+      final shopsSnap = await firestore
           .collection('branches')
           .doc(branchId)
           .collection('routes')
+          .doc(widget.routeId)
+          .collection('shops')
           .get();
-
-      print('🗺️  Total routes found: ${routesSnapshot.docs.length}');
-
-      final shops = <Map<String, dynamic>>[];
-
-      // For each route, get all shops
-      for (var routeDoc in routesSnapshot.docs) {
-        final routeName = routeDoc.id;
-        print('📍 Checking route: $routeName');
+          
+      for (var shopDoc in shopsSnap.docs) {
+        final data = shopDoc.data();
         
-        final shopsSnapshot = await firestore
-            .collection('branches')
-            .doc(branchId)
-            .collection('routes')
-            .doc(routeName)
-            .collection('shops')
-            .get();
+        // Filter: Only show shops with amount >= 1000
+        final dynamic amountVal = data['amount'];
+        double amount = 0.0;
+        if (amountVal is num) amount = amountVal.toDouble();
+        else if (amountVal is String) amount = double.tryParse(amountVal) ?? 0.0;
+        
+        if (amount < 1000) {
+          print('⏭️  Skipping shop ${shopDoc.id}: amount ${amount} < 1000');
+          continue; // Skip shops with amount < 1000
+        }
+        
+        String status = (data['status'] as String?) ?? 'Unpaid';
+        DateTime? paidAt;
+        if (data['paidAt'] != null) {
+          final v = data['paidAt'];
+          if (v is Timestamp) paidAt = v.toDate();
+          else if (v is DateTime) paidAt = v;
+        }
 
-        print('📦 Shops in route $routeName: ${shopsSnapshot.docs.length}');
-
-        for (var shopDoc in shopsSnapshot.docs) {
-          final data = shopDoc.data();
-          
-          // Extract amount with detailed logging
-          final dynamic amountVal = data['amount'];
-          double amount = 0.0;
-          
-          if (amountVal is num) {
-            amount = amountVal.toDouble();
-          } else if (amountVal is String) {
-            amount = double.tryParse(amountVal) ?? 0.0;
-          } else {
-            amount = 0.0;
+        if (status == 'Paid' && paidAt != null) {
+          final difference = now.difference(paidAt).inSeconds;
+          if (difference >= 43200) {
+            status = 'Unpaid';
           }
+        }
 
-          print('🏪 Shop $routeName/${shopDoc.id}: name=${data['name']}, amount=$amount');
-
-          // Filter: Only show shops with amount < 1000
-          if (amount >= 1000) {
-            print('⏭️  Skipping shop ${shopDoc.id}: amount $amount >= 1000');
-            continue;
-          }
-
-          final shop = {
-            'id': shopDoc.id,
-            'name': data['name'] ?? 'Unknown',
-            'address': data['address'] ?? 'Unknown',
-            'phone': data['phone'] ?? 'N/A',
-            'status': data['status'] ?? 'Unpaid',
-            'amount': amount,
-            'route': routeName,
-            'paidAt': data['paidAt'] != null
-                ? (data['paidAt'] as Timestamp).toDate()
-                : null,
-            'latitude': data['latitude'],
-            'longitude': data['longitude'],
-          };
-
-          // Initialize countdown if Paid
-          if (shop['status'] == 'Paid' && shop['paidAt'] != null) {
-            final diff = DateTime.now().difference(shop['paidAt']).inSeconds;
-            final remaining = 43200 - diff;
-            if (remaining > 0) {
-              countdowns[shop['id']] = remaining;
-            }
-          }
-
-          shops.add(shop);
+        updatedShops.add({
+          'id': shopDoc.id,
+          'name': data['name'] ?? '',
+          'address': data['address'] ?? '',
+          'phone': data['phone'] ?? '',
+          'status': status,
+          'amount': amount,
+          'totalPaid': data['totalPaid'] ?? 0,
+          'paidAmount': data['paidAmount'] ?? 0,
+          'paidAt': paidAt,
+          'latitude': data['latitude'],
+          'longitude': data['longitude'],
+          'routeId': widget.routeId,
+        });
+        
+        // Start countdown for paid shops
+        if (status == 'Paid' && paidAt != null) {
+          _startCountdown(shopDoc.id, data['name'] ?? '', paidAt);
         }
       }
+      
+      print('✅ Loaded ${updatedShops.length} shops (with amount >= 1000) for route ${widget.routeId}');
 
-      if (mounted) {
-        setState(() {
-          allShops = shops;
-          isLoading = false;
-        });
-      }
-      print('✅ Loaded ${shops.length} low-level shops from all routes (amount < 1000)');
+      setState(() {
+        allShops = updatedShops;
+        _filterShops();
+      });
     } catch (e) {
       print('❌ Error loading shops: $e');
-      if (mounted) {
-        setState(() {
-          isLoading = false;
-        });
-      }
+      setState(() {
+        allShops = [];
+        filteredShops = [];
+      });
+    } finally {
+      if (mounted) setState(() => isShopsLoading = false);
     }
   }
 
-  Future<void> _refreshData() async {
-    await _loadShops();
+  void _filterShops() {
+    filteredShops = allShops.where((shop) {
+      final matchStatus =
+          showUnpaid ? shop['status'] == 'Unpaid' : shop['status'] == 'Paid';
+      final matchSearch = shop['name']
+          .toLowerCase()
+          .contains(_searchController.text.toLowerCase());
+      final hasValidAmount = showUnpaid || shop['amount'] != null;
+      return matchStatus && matchSearch && hasValidAmount;
+    }).toList();
   }
 
-  void _filterShops() {
-    setState(() {});
+  Future<void> _refreshData() async {
+    setState(() {
+      isUploading = true;
+    });
+    await _loadShops();
+    setState(() {
+      isUploading = false;
+    });
   }
 
   String formatDuration(Duration duration) {
@@ -165,20 +199,118 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
     return "$hours:$minutes:$seconds";
   }
 
+  Future<void> _startCountdown(String shopId, String shopName, DateTime paidAt) async {
+    if (countdowns.containsKey(shopId)) {
+      return;
+    }
+
+    final elapsed = DateTime.now().difference(paidAt).inSeconds;
+    final totalSeconds = 43200; // 12 hours
+    final remaining = totalSeconds - elapsed;
+
+    if (remaining <= 0) {
+      return; // Already expired
+    }
+
+    countdowns[shopId] = remaining;
+
+    timers[shopId]?.cancel();
+    timers[shopId] = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        return;
+      }
+
+      if (countdowns.containsKey(shopId) && countdowns[shopId]! > 0) {
+        setState(() {
+          countdowns[shopId] = countdowns[shopId]! - 1;
+        });
+      } else if (countdowns.containsKey(shopId) && countdowns[shopId] == 0) {
+        timer.cancel();
+        countdowns.remove(shopId);
+        timers.remove(shopId);
+        _revertShopStatus(shopId, shopName);
+      }
+    });
+  }
+
+  Future<void> _revertShopStatus(String shopId, String shopName) async {
+    try {
+      final branchId = BranchContext().branchId;
+      if (branchId == null) return;
+
+      // Update Firestore
+      await FirebaseFirestore.instance
+          .collection('branches')
+          .doc(branchId)
+          .collection('routes')
+          .doc(widget.routeId)
+          .collection('shops')
+          .doc(shopId)
+          .update({
+            'status': 'Unpaid',
+            'paidAt': null,
+          });
+
+      // Update local state
+      final shopIndex = allShops.indexWhere((s) => s['id'] == shopId);
+      if (shopIndex != -1 && mounted) {
+        setState(() {
+          allShops[shopIndex]['status'] = 'Unpaid';
+          allShops[shopIndex]['paidAt'] = null;
+          _filterShops();
+        });
+      }
+    } catch (e) {
+      print('❌ Error reverting shop status: $e');
+    }
+  }
+
+  Widget _buildCountdownText(int secondsRemaining) {
+    final hours = secondsRemaining ~/ 3600;
+    final minutes = (secondsRemaining % 3600) ~/ 60;
+    final seconds = secondsRemaining % 60;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A4D3E).withOpacity(0.9),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: const Color(0xFF20D9A3).withOpacity(0.6),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Reverting',
+            style: GoogleFonts.poppins(
+              fontSize: 8,
+              fontWeight: FontWeight.w500,
+              color: const Color(0xFFB0B8C1),
+            ),
+          ),
+          Text(
+            "${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}",
+            style: GoogleFonts.poppins(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF20D9A3),
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final filteredShops = allShops.where((shop) {
-      final matchStatus =
-          showUnpaid ? shop['status'] == 'Unpaid' : shop['status'] == 'Paid';
-      final matchSearch = shop['name']
-          .toString()
-          .toLowerCase()
-          .contains(_searchController.text.toLowerCase());
-      return matchStatus && matchSearch;
-    }).toList();
-
     return Scaffold(
-       appBar: AppBar(
+      backgroundColor: AppColors.lightBackground,
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
         backgroundColor: AppColors.lightSurface,
         elevation: 0,
         leading: IconButton(
@@ -189,13 +321,19 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-          
             Text(
-              ('Low Level Shops'),
+              widget.routeName,
               style: GoogleFonts.poppins(
                 fontSize: 18,
                 fontWeight: FontWeight.w700,
                 color: AppColors.lightTextPrimary,
+              ),
+            ),
+            Text(
+              '${allShops.length} Shops',
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                color: AppColors.lightTextSecondary,
               ),
             ),
           ],
@@ -208,31 +346,51 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
           ),
         ],
       ),
-    
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: Column(
-              children: [
-                _buildSearchBar(),
-                const SizedBox(height: 12),
-                _buildFilterTabs(),
-              ],
+      body: FadeTransition(
+        opacity: _fadeAnimation,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Column(
+                children: [
+                  _buildSearchBar(),
+                  const SizedBox(height: 12),
+                  _buildFilterTabs(),
+                ],
+              ),
             ),
-          ),
-          Expanded(
-            child: isLoading
-                ? const Center(
-                    child: CircularProgressIndicator(
-                      color: AppColors.accentTeal,
+            // Shops List
+            Expanded(
+              child: isShopsLoading
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          CircularProgressIndicator(
+                            color: AppColors.accentTealDark,
+                            strokeWidth: 3,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Loading shops...',
+                            style: GoogleFonts.poppins(
+                              color: AppColors.lightTextSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _refreshData,
+                      color: AppColors.accentTealDark,
+                      child: filteredShops.isEmpty
+                          ? _buildEmptyState()
+                          : _buildShopsList(filteredShops),
                     ),
-                  )
-                : filteredShops.isEmpty
-                    ? _buildEmptyState()
-                    : _buildShopsList(filteredShops),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -242,20 +400,35 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
       decoration: BoxDecoration(
         color: AppColors.lightSurface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.lightCardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: TextField(
         controller: _searchController,
-        onChanged: (_) => setState(() {}),
-        style: GoogleFonts.poppins(color: AppColors.lightTextPrimary),
+        onChanged: (value) {
+          setState(() {
+            _filterShops();
+          });
+        },
         decoration: InputDecoration(
           hintText: 'Search shops...',
-          hintStyle: GoogleFonts.poppins(color: AppColors.lightTextMuted),
-          prefixIcon:
-              const Icon(Icons.search_rounded, color: AppColors.lightTextMuted),
           border: InputBorder.none,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          prefixIcon: const Icon(Icons.search_rounded,
+              color: AppColors.lightTextSecondary, size: 22),
+          contentPadding: const EdgeInsets.symmetric(vertical: 12),
+          hintStyle: GoogleFonts.poppins(
+            color: AppColors.lightTextSecondary,
+            fontSize: 14,
+          ),
+        ),
+        style: GoogleFonts.poppins(
+          color: AppColors.lightTextPrimary,
+          fontSize: 14,
         ),
       ),
     );
@@ -263,55 +436,82 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
 
   Widget _buildFilterTabs() {
     return Container(
-      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: AppColors.lightSurface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.lightCardBorder),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         children: [
           Expanded(
-            child: _buildFilterTab(
-              'Unpaid',
-              showUnpaid,
-              () => setState(() => showUnpaid = true),
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  showUnpaid = true;
+                  _filterShops();
+                });
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: showUnpaid
+                      ? AppColors.accentTeal.withOpacity(0.15)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Center(
+                  child: Text(
+                    'Unpaid',
+                    style: GoogleFonts.poppins(
+                      fontSize: 13,
+                      fontWeight: showUnpaid ? FontWeight.w600 : FontWeight.w500,
+                      color: showUnpaid
+                          ? AppColors.accentTeal
+                          : AppColors.lightTextSecondary,
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
-          const SizedBox(width: 8),
           Expanded(
-            child: _buildFilterTab(
-              'Paid',
-              !showUnpaid,
-              () => setState(() => showUnpaid = false),
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  showUnpaid = false;
+                  _filterShops();
+                });
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: !showUnpaid
+                      ? AppColors.accentTeal.withOpacity(0.15)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Center(
+                  child: Text(
+                    'Paid',
+                    style: GoogleFonts.poppins(
+                      fontSize: 13,
+                      fontWeight: !showUnpaid ? FontWeight.w600 : FontWeight.w500,
+                      color: !showUnpaid
+                          ? AppColors.accentTeal
+                          : AppColors.lightTextSecondary,
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildFilterTab(
-      String label, bool isActive, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: isActive ? AppColors.accentTeal : AppColors.lightBackground,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: GoogleFonts.poppins(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: isActive ? Colors.white : AppColors.lightTextMuted,
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -338,8 +538,8 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
           const SizedBox(height: 8),
           Text(
             showUnpaid
-                ? 'All low-level shops have been paid'
-                : 'No low-level shops with pending payments',
+                ? 'All shops in this route have been paid'
+                : 'No shops with pending payments',
             style: GoogleFonts.poppins(
               fontSize: 14,
               color: AppColors.lightTextSecondary,
@@ -351,16 +551,13 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
   }
 
   Widget _buildShopsList(List<Map<String, dynamic>> shops) {
-    return RefreshIndicator(
-      onRefresh: _refreshData,
-      color: AppColors.accentTealDark,
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        itemCount: shops.length,
-        itemBuilder: (context, index) {
-          return _buildShopCard(shops[index], index);
-        },
-      ),
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: shops.length,
+      itemBuilder: (context, index) {
+        final shop = shops[index];
+        return _buildShopCard(shop, index);
+      },
     );
   }
 
@@ -406,7 +603,7 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
                 MaterialPageRoute(
                   builder: (context) => BalanceScreen(
                     shopName: shop['name'],
-                    routeName: shop['route'],
+                    routeName: widget.routeName,
                     shopId: shop['id'],
                     onBalanceAdjusted: (shopName, reducedAmount) async {
                       final updatedShops =
@@ -421,8 +618,10 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
                           updatedShops[shopIndex]['paidAt'] = now;
                           updatedShops[shopIndex]['paidAmount'] = reducedAmount;
                           allShops = updatedShops;
-                          countdowns[updatedShops[shopIndex]['id']] = 43200;
+                          _filterShops();
                         });
+                        // Start countdown for revert after 12 hours
+                        _startCountdown(shop['id'], shopName, now);
                       }
                     },
                   ),
@@ -456,19 +655,19 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Shop Icon
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color.fromARGB(255, 61, 161, 148),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(
-                          Icons.storefront_rounded,
-                          color: Color.fromARGB(255, 32, 217, 202),
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
+                      // Container(
+                      //   padding: const EdgeInsets.all(8),
+                      //   decoration: BoxDecoration(
+                      //     color: const Color.fromARGB(255, 61, 161, 148),
+                      //     borderRadius: BorderRadius.circular(8),
+                      //   ),
+                      //   child: const Icon(
+                      //     Icons.storefront_rounded,
+                      //     color: Color.fromARGB(255, 32, 217, 202),
+                      //     size: 20,
+                      //   ),
+                      // ),
+                      // const SizedBox(width: 10),
                       // Shop Name - Expanded
                       Expanded(
                         child: Column(
@@ -510,6 +709,7 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
                             const SizedBox(height: 8),
                             // Balance and Status Tags Under Phone
                             Row(
+                              mainAxisAlignment: MainAxisAlignment.start,
                               children: [
                                 Container(
                                   padding: const EdgeInsets.symmetric(
@@ -586,6 +786,17 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
                                         Uri.parse(geoUrl),
                                         mode: LaunchMode.externalApplication,
                                       );
+                                    } else {
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                                'No maps application found'),
+                                            duration: Duration(seconds: 2),
+                                          ),
+                                        );
+                                      }
                                     }
                                   }
                                 } catch (e) {
@@ -597,6 +808,16 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
                                       ),
                                     );
                                   }
+                                }
+                              } else {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content:
+                                          Text('Location data not available'),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
                                 }
                               }
                             },
@@ -631,6 +852,17 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
                                       Uri.parse(phoneUrl),
                                       mode: LaunchMode.externalApplication,
                                     );
+                                  } else {
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                              'Cannot call $phone - No phone app found'),
+                                          duration: const Duration(seconds: 2),
+                                        ),
+                                      );
+                                    }
                                   }
                                 } catch (e) {
                                   if (mounted) {
@@ -641,6 +873,15 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
                                       ),
                                     );
                                   }
+                                }
+                              } else {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Phone number not available'),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
                                 }
                               }
                             },
@@ -677,46 +918,6 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildCountdownText(int seconds) {
-    final duration = Duration(seconds: seconds);
-    final hours = duration.inHours.toString().padLeft(2, '0');
-    final minutes = (duration.inMinutes % 60).toString().padLeft(2, '0');
-    final secs = (duration.inSeconds % 60).toString().padLeft(2, '0');
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A4D3E).withOpacity(0.9),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: const Color(0xFF20D9A3).withOpacity(0.6),
-          width: 1,
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'Reverting',
-            style: GoogleFonts.poppins(
-              fontSize: 8,
-              fontWeight: FontWeight.w400,
-              color: const Color(0xFF20D9A3).withOpacity(0.8),
-            ),
-          ),
-          Text(
-            '$hours:$minutes:$secs',
-            style: GoogleFonts.poppins(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: const Color(0xFF20D9A3),
-            ),
-          ),
-        ],
       ),
     );
   }
