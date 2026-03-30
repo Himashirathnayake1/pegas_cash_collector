@@ -550,7 +550,7 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
         ),
-        keyboardType: TextInputType.text,
+        keyboardType: TextInputType.number,
       ),
     );
   }
