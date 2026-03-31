@@ -31,6 +31,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
   bool isShopsLoading = true;
   Timer? _uiUpdateTimer;
   bool isUploading = false;
+  bool _isSavingOrder = false;
   
   // Countdown state
   Map<String, int> countdowns = {};
@@ -143,6 +144,9 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
           'paidAt': paidAt,
           'latitude': data['latitude'],
           'longitude': data['longitude'],
+          'orderNumber': (data['orderNumber'] is num)
+              ? (data['orderNumber'] as num).toInt()
+              : 999999,
           'routeId': widget.routeId,
         });
         
@@ -153,6 +157,12 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
       }
       
       print('✅ Loaded ${updatedShops.length} shops (with amount >= 1000) for route ${widget.routeId}');
+
+      updatedShops.sort((a, b) {
+        final aOrder = (a['orderNumber'] as int?) ?? 999999;
+        final bOrder = (b['orderNumber'] as int?) ?? 999999;
+        return aOrder.compareTo(bOrder);
+      });
 
       setState(() {
         allShops = updatedShops;
@@ -189,6 +199,96 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
     setState(() {
       isUploading = false;
     });
+  }
+
+  bool _matchesCurrentStatusFilter(Map<String, dynamic> shop) {
+    return showUnpaid ? shop['status'] == 'Unpaid' : shop['status'] == 'Paid';
+  }
+
+  Future<void> _persistShopOrderNumbers() async {
+    if (_isSavingOrder) return;
+
+    final branchId = BranchContext().branchId;
+    if (branchId == null) return;
+
+    _isSavingOrder = true;
+    try {
+      final firestore = FirebaseFirestore.instance;
+      final routeRef = firestore
+          .collection('branches')
+          .doc(branchId)
+          .collection('routes')
+          .doc(widget.routeId)
+          .collection('shops');
+
+      final batch = firestore.batch();
+      for (int i = 0; i < allShops.length; i++) {
+        final shop = allShops[i];
+        final nextOrder = i + 1;
+        shop['orderNumber'] = nextOrder;
+        batch.update(routeRef.doc(shop['id'] as String), {
+          'orderNumber': nextOrder,
+        });
+      }
+
+      await batch.commit();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save shop order: $e'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } finally {
+      _isSavingOrder = false;
+    }
+  }
+
+  Future<void> _onReorderShops(int oldIndex, int newIndex) async {
+    if (_searchController.text.trim().isNotEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Clear search to reorder shops'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    final visibleIndices = <int>[];
+    for (int i = 0; i < allShops.length; i++) {
+      if (_matchesCurrentStatusFilter(allShops[i])) {
+        visibleIndices.add(i);
+      }
+    }
+
+    if (oldIndex < 0 || oldIndex >= visibleIndices.length) return;
+    if (newIndex > visibleIndices.length) return;
+
+    final oldAllIndex = visibleIndices[oldIndex];
+    final movedShop = allShops.removeAt(oldAllIndex);
+
+    final visibleAfterRemoval = <int>[];
+    for (int i = 0; i < allShops.length; i++) {
+      if (_matchesCurrentStatusFilter(allShops[i])) {
+        visibleAfterRemoval.add(i);
+      }
+    }
+
+    final targetAllIndex =
+        (newIndex >= visibleAfterRemoval.length) ? allShops.length : visibleAfterRemoval[newIndex];
+
+    allShops.insert(targetAllIndex, movedShop);
+
+    setState(() {
+      _filterShops();
+    });
+
+    await _persistShopOrderNumbers();
   }
 
   String formatDuration(Duration duration) {
@@ -551,17 +651,50 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
   }
 
   Widget _buildShopsList(List<Map<String, dynamic>> shops) {
-    return ListView.builder(
+    final canReorder = _searchController.text.trim().isEmpty;
+
+    if (!canReorder) {
+      return ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        itemCount: shops.length,
+        itemBuilder: (context, index) {
+          final shop = shops[index];
+          return _buildShopCard(shop, index);
+        },
+      );
+    }
+
+    return ReorderableListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       itemCount: shops.length,
+      onReorder: (oldIndex, newIndex) {
+        unawaited(_onReorderShops(oldIndex, newIndex));
+      },
+      buildDefaultDragHandles: false,
+      proxyDecorator: (child, index, animation) {
+        return Material(
+          color: Colors.transparent,
+          child: child,
+        );
+      },
       itemBuilder: (context, index) {
         final shop = shops[index];
-        return _buildShopCard(shop, index);
+        return ReorderableDelayedDragStartListener(
+          key: ValueKey(shop['id']),
+          index: index,
+          child: _buildShopCard(
+            shop,
+            index,
+          ),
+        );
       },
     );
   }
 
-  Widget _buildShopCard(Map<String, dynamic> shop, int index) {
+  Widget _buildShopCard(
+    Map<String, dynamic> shop,
+    int index, )
+   {
     final name = shop['name'];
     final status = shop['status'];
     final paidAt = shop['paidAt'] as DateTime?;
@@ -611,6 +744,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                       final shopIndex =
                           updatedShops.indexWhere((s) => s['name'] == shopName);
                       if (shopIndex != -1) {
+                        final shopId = updatedShops[shopIndex]['id'] as String;
                         final now = DateTime.now();
                         setState(() {
                           updatedShops[shopIndex]['status'] = 'Paid';
@@ -621,7 +755,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                           _filterShops();
                         });
                         // Start countdown for revert after 12 hours
-                        _startCountdown(shop['id'], shopName, now);
+                        _startCountdown(shopId, shopName, now);
                       }
                     },
                   ),
