@@ -1,9 +1,13 @@
 import 'dart:ui';
 import 'dart:async';
 import 'package:pegas_cashcollector/screens/balance_screen.dart';
+import 'package:pegas_cashcollector/screens/nearest_shops_map_screen.dart';
+import 'package:pegas_cashcollector/screens/osrm_optimized_route_map_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../utils/app_theme.dart';
 import '../services/branch_context.dart';
@@ -22,9 +26,10 @@ class RouteShopsScreen extends StatefulWidget {
   State<RouteShopsScreen> createState() => _RouteShopsScreenState();
 }
 
-class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProviderStateMixin {
+class _RouteShopsScreenState extends State<RouteShopsScreen>
+    with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
-  
+
   List<Map<String, dynamic>> allShops = [];
   List<Map<String, dynamic>> filteredShops = [];
   bool showUnpaid = true;
@@ -32,7 +37,9 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
   Timer? _uiUpdateTimer;
   bool isUploading = false;
   bool _isSavingOrder = false;
-  
+  Position? _currentPosition;
+  bool _locationDialogHandled = false;
+
   // Countdown state
   Map<String, int> countdowns = {};
   Map<String, Timer> timers = {};
@@ -43,14 +50,20 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
   @override
   void initState() {
     super.initState();
-    _loadShops();
-    _startUiUpdater();
     _fadeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
     )..forward();
-    _fadeAnimation =
-        CurvedAnimation(parent: _fadeController, curve: Curves.easeOut);
+    _fadeAnimation = CurvedAnimation(
+      parent: _fadeController,
+      curve: Curves.easeOut,
+    );
+    _startUiUpdater();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _showLocationSortDialogOnOpen();
+    });
   }
 
   void _startUiUpdater() {
@@ -74,7 +87,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
     super.dispose();
   }
 
-  Future<void> _loadShops() async {
+  Future<void> _loadShops({bool refreshLocationForSort = true}) async {
     setState(() => isShopsLoading = true);
 
     try {
@@ -83,7 +96,12 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
       final firestore = FirebaseFirestore.instance;
       final updatedShops = <Map<String, dynamic>>[];
       final now = DateTime.now();
-      
+
+      // Best effort location fetch for nearest-first sorting in unpaid tab.
+      if (refreshLocationForSort) {
+        await _refreshCurrentPosition();
+      }
+
       // Get branch ID from context
       final branchId = BranchContext().branchId;
       if (branchId == null) {
@@ -95,34 +113,40 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
       print('📍 Loading shops for branch: $branchId, route: ${widget.routeId}');
 
       // Get shops for this specific route in this branch
-      final shopsSnap = await firestore
-          .collection('branches')
-          .doc(branchId)
-          .collection('routes')
-          .doc(widget.routeId)
-          .collection('shops')
-          .get();
-          
+      final shopsSnap =
+          await firestore
+              .collection('branches')
+              .doc(branchId)
+              .collection('routes')
+              .doc(widget.routeId)
+              .collection('shops')
+              .get();
+
       for (var shopDoc in shopsSnap.docs) {
         final data = shopDoc.data();
-        
-        // Filter: Only show shops with amount >= 1000
+
+        // Filter: Only show shops with amount >= 0
         final dynamic amountVal = data['amount'];
         double amount = 0.0;
-        if (amountVal is num) amount = amountVal.toDouble();
-        else if (amountVal is String) amount = double.tryParse(amountVal) ?? 0.0;
-        
-        if (amount < 1000) {
-          print('⏭️  Skipping shop ${shopDoc.id}: amount ${amount} < 1000');
-          continue; // Skip shops with amount < 1000
+        if (amountVal is num)
+          amount = amountVal.toDouble();
+        else if (amountVal is String)
+          amount = double.tryParse(amountVal) ?? 0.0;
+
+        if (amount < 0) {
+          print('⏭️  Skipping shop ${shopDoc.id}: amount ${amount} < 0');
+          continue; // Skip shops with amount < 0
         }
-        
-        String status = (data['status'] as String?) ?? 'Unpaid';
+
+        final rawStatus = ((data['status'] as String?) ?? 'Unpaid').trim();
+        String status = rawStatus == 'Paid' ? 'Paid' : 'Unpaid';
         DateTime? paidAt;
         if (data['paidAt'] != null) {
           final v = data['paidAt'];
-          if (v is Timestamp) paidAt = v.toDate();
-          else if (v is DateTime) paidAt = v;
+          if (v is Timestamp)
+            paidAt = v.toDate();
+          else if (v is DateTime)
+            paidAt = v;
         }
 
         if (status == 'Paid' && paidAt != null) {
@@ -144,19 +168,23 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
           'paidAt': paidAt,
           'latitude': data['latitude'],
           'longitude': data['longitude'],
-          'orderNumber': (data['orderNumber'] is num)
-              ? (data['orderNumber'] as num).toInt()
-              : 999999,
+          'orderNumber':
+              (data['orderNumber'] is num)
+                  ? (data['orderNumber'] as num).toInt()
+                  : 999999,
+          'distanceMeters': null,
           'routeId': widget.routeId,
         });
-        
+
         // Start countdown for paid shops
         if (status == 'Paid' && paidAt != null) {
           _startCountdown(shopDoc.id, data['name'] ?? '', paidAt);
         }
       }
-      
-      print('✅ Loaded ${updatedShops.length} shops (with amount >= 1000) for route ${widget.routeId}');
+
+      print(
+        '✅ Loaded ${updatedShops.length} shops (with amount >= 0) for route ${widget.routeId}',
+      );
 
       updatedShops.sort((a, b) {
         final aOrder = (a['orderNumber'] as int?) ?? 999999;
@@ -180,15 +208,249 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
   }
 
   void _filterShops() {
-    filteredShops = allShops.where((shop) {
-      final matchStatus =
-          showUnpaid ? shop['status'] == 'Unpaid' : shop['status'] == 'Paid';
-      final matchSearch = shop['name']
-          .toLowerCase()
-          .contains(_searchController.text.toLowerCase());
-      final hasValidAmount = showUnpaid || shop['amount'] != null;
-      return matchStatus && matchSearch && hasValidAmount;
-    }).toList();
+    filteredShops =
+        allShops.where((shop) {
+          final matchStatus =
+              showUnpaid
+                  ? shop['status'] == 'Unpaid'
+                  : shop['status'] == 'Paid';
+          final matchSearch = shop['name'].toLowerCase().contains(
+            _searchController.text.toLowerCase(),
+          );
+          final hasValidAmount = showUnpaid || shop['amount'] != null;
+          return matchStatus && matchSearch && hasValidAmount;
+        }).toList();
+
+    if (showUnpaid) {
+      _sortFilteredShopsByDistance();
+    }
+  }
+
+  Future<void> _refreshCurrentPosition() async {
+    await _refreshCurrentPositionWithFeedback(showFeedback: false);
+  }
+
+  Future<bool> _refreshCurrentPositionWithFeedback({
+    required bool showFeedback,
+  }) async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (showFeedback && mounted) {
+          await _showLocationErrorDialog(
+            title: 'Turn on location services',
+            message:
+                'Location is currently turned off. Enable location services to sort unpaid shops by nearest distance.',
+            actionLabel: 'Open location settings',
+            onAction: () async {
+              await Geolocator.openLocationSettings();
+            },
+          );
+        }
+        return false;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied) {
+        if (showFeedback && mounted) {
+          _showFriendlySnackBar(
+            'Location permission denied. Using normal shop order.',
+          );
+        }
+        return false;
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        if (showFeedback && mounted) {
+          await _showLocationErrorDialog(
+            title: 'Location permission is blocked',
+            message:
+                'Please allow location permission from app settings to enable nearest-shop sorting.',
+            actionLabel: 'Open app settings',
+            onAction: () async {
+              await Geolocator.openAppSettings();
+            },
+          );
+        }
+        return false;
+      }
+
+      _currentPosition = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      return true;
+    } catch (e) {
+      if (showFeedback && mounted) {
+        _showFriendlySnackBar(
+          'Could not get current location. Using normal shop order.',
+        );
+      }
+      return false;
+    }
+  }
+
+  void _showFriendlySnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  Future<void> _showLocationErrorDialog({
+    required String title,
+    required String message,
+    required String actionLabel,
+    required Future<void> Function() onAction,
+  }) async {
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3E0),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.location_off_rounded,
+                  color: Color(0xFFF57C00),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: GoogleFonts.poppins(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.lightTextPrimary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            message,
+            style: GoogleFonts.poppins(
+              fontSize: 13,
+              color: AppColors.lightTextSecondary,
+              height: 1.4,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'Continue without sorting',
+                style: TextStyle(color: Colors.black),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await onAction();
+              },
+              child: Text(actionLabel),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  double? _toDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  void _sortFilteredShopsByDistance() {
+    final position = _currentPosition;
+    if (position == null) {
+      filteredShops.sort((a, b) {
+        final aOrder = (a['orderNumber'] as int?) ?? 999999;
+        final bOrder = (b['orderNumber'] as int?) ?? 999999;
+        return aOrder.compareTo(bOrder);
+      });
+      return;
+    }
+
+    final withDistance = <Map<String, dynamic>>[];
+    final withoutDistance = <Map<String, dynamic>>[];
+
+    for (final shop in filteredShops) {
+      final lat = _toDouble(shop['latitude']);
+      final lng = _toDouble(shop['longitude']);
+      if (lat == null || lng == null) {
+        shop['distanceMeters'] = null;
+        withoutDistance.add(shop);
+        continue;
+      }
+      withDistance.add(shop);
+    }
+
+    // Nearest-neighbor chain order:
+    // current location -> nearest shop -> nearest to that shop -> ...
+    final ordered = <Map<String, dynamic>>[];
+    final remaining = List<Map<String, dynamic>>.from(withDistance);
+    var fromLat = position.latitude;
+    var fromLng = position.longitude;
+
+    while (remaining.isNotEmpty) {
+      var bestIndex = 0;
+      var bestDistance = double.infinity;
+
+      for (int i = 0; i < remaining.length; i++) {
+        final candidate = remaining[i];
+        final lat = _toDouble(candidate['latitude']);
+        final lng = _toDouble(candidate['longitude']);
+        if (lat == null || lng == null) continue;
+
+        final distance = Geolocator.distanceBetween(fromLat, fromLng, lat, lng);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = i;
+        }
+      }
+
+      final nextShop = remaining.removeAt(bestIndex);
+      nextShop['distanceMeters'] = bestDistance;
+      ordered.add(nextShop);
+
+      final nextLat = _toDouble(nextShop['latitude']);
+      final nextLng = _toDouble(nextShop['longitude']);
+      if (nextLat != null && nextLng != null) {
+        fromLat = nextLat;
+        fromLng = nextLng;
+      }
+    }
+
+    withoutDistance.sort((a, b) {
+      final aOrder = (a['orderNumber'] as int?) ?? 999999;
+      final bOrder = (b['orderNumber'] as int?) ?? 999999;
+      return aOrder.compareTo(bOrder);
+    });
+
+    filteredShops = [...ordered, ...withoutDistance];
   }
 
   Future<void> _refreshData() async {
@@ -199,6 +461,141 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
     setState(() {
       isUploading = false;
     });
+  }
+
+  Future<void> _showLocationSortDialogOnOpen() async {
+    if (_locationDialogHandled) {
+      await _loadShops();
+      return;
+    }
+
+    _locationDialogHandled = true;
+
+    final bool? shouldFetchLocation = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 58,
+                    height: 58,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE7F8F4),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: const Icon(
+                      Icons.near_me_rounded,
+                      color: AppColors.accentTealDark,
+                      size: 28,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Center(
+                  child: Text(
+                    'Find near shops to you',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.poppins(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.lightTextPrimary,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Use your current location to show the closest shops first.',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    height: 1.45,
+                    color: AppColors.lightTextSecondary,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF4F7FA),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.info_outline_rounded,
+                        size: 18,
+                        color: Color(0xFF4E7CA3),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Location is only used for sorting. You can continue without it.',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: const Color(0xFF4E7CA3),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text('Not now'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        icon: const Icon(Icons.my_location_rounded, size: 18),
+                        style: ElevatedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          backgroundColor: AppColors.accentTealDark,
+                          foregroundColor: Colors.white,
+                        ),
+                        label: const Text('Allow'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (shouldFetchLocation == true) {
+      await _refreshCurrentPositionWithFeedback(showFeedback: true);
+      await _loadShops(refreshLocationForSort: false);
+      return;
+    }
+
+    await _loadShops(refreshLocationForSort: false);
   }
 
   bool _matchesCurrentStatusFilter(Map<String, dynamic> shop) {
@@ -280,7 +677,9 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
     }
 
     final targetAllIndex =
-        (newIndex >= visibleAfterRemoval.length) ? allShops.length : visibleAfterRemoval[newIndex];
+        (newIndex >= visibleAfterRemoval.length)
+            ? allShops.length
+            : visibleAfterRemoval[newIndex];
 
     allShops.insert(targetAllIndex, movedShop);
 
@@ -299,7 +698,11 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
     return "$hours:$minutes:$seconds";
   }
 
-  Future<void> _startCountdown(String shopId, String shopName, DateTime paidAt) async {
+  Future<void> _startCountdown(
+    String shopId,
+    String shopName,
+    DateTime paidAt,
+  ) async {
     if (countdowns.containsKey(shopId)) {
       return;
     }
@@ -346,10 +749,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
           .doc(widget.routeId)
           .collection('shops')
           .doc(shopId)
-          .update({
-            'status': 'Unpaid',
-            'paidAt': null,
-          });
+          .update({'status': 'Unpaid', 'paidAt': null});
 
       // Update local state
       final shopIndex = allShops.indexWhere((s) => s['id'] == shopId);
@@ -414,8 +814,10 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
         backgroundColor: AppColors.lightSurface,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_rounded,
-              color: AppColors.lightTextPrimary),
+          icon: const Icon(
+            Icons.arrow_back_ios_rounded,
+            color: AppColors.lightTextPrimary,
+          ),
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(
@@ -439,10 +841,53 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
           ],
         ),
         actions: [
+          // IconButton(
+          //   tooltip: 'View OSRM optimized route map',
+          //   onPressed: () {
+          //     Navigator.push(
+          //       context,
+          //       MaterialPageRoute(
+          //         builder:
+          //             (context) => OsrmOptimizedRouteMapScreen(
+          //               routeId: widget.routeId,
+          //               routeName: widget.routeName,
+          //               shops: allShops,
+          //               currentPosition: _currentPosition,
+          //             ),
+          //       ),
+          //     );
+          //   },
+          //   icon: const Icon(
+          //     Icons.route_rounded,
+          //     color: AppColors.lightTextPrimary,
+          //   ),
+          // ),
+          IconButton(
+            tooltip: 'View nearest shops on map',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (context) => NearestShopsMapScreen(
+                        routeName: widget.routeName,
+                        shops: allShops,
+                        currentPosition: _currentPosition,
+                      ),
+                ),
+              );
+            },
+            icon: const Icon(
+              Icons.map_rounded,
+              color: AppColors.lightTextPrimary,
+            ),
+          ),
           IconButton(
             onPressed: _refreshData,
-            icon: const Icon(Icons.refresh_rounded,
-                color: AppColors.lightTextPrimary),
+            icon: const Icon(
+              Icons.refresh_rounded,
+              color: AppColors.lightTextPrimary,
+            ),
           ),
         ],
       ),
@@ -462,32 +907,34 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
             ),
             // Shops List
             Expanded(
-              child: isShopsLoading
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          CircularProgressIndicator(
-                            color: AppColors.accentTealDark,
-                            strokeWidth: 3,
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Loading shops...',
-                            style: GoogleFonts.poppins(
-                              color: AppColors.lightTextSecondary,
+              child:
+                  isShopsLoading
+                      ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            LoadingAnimationWidget.inkDrop(
+                              color: AppColors.accentTealDark,
+                              size: 46,
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 16),
+                            Text(
+                              'Loading shops...',
+                              style: GoogleFonts.poppins(
+                                color: AppColors.lightTextSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                      : RefreshIndicator(
+                        onRefresh: _refreshData,
+                        color: AppColors.accentTealDark,
+                        child:
+                            filteredShops.isEmpty
+                                ? _buildEmptyState()
+                                : _buildShopsList(filteredShops),
                       ),
-                    )
-                  : RefreshIndicator(
-                      onRefresh: _refreshData,
-                      color: AppColors.accentTealDark,
-                      child: filteredShops.isEmpty
-                          ? _buildEmptyState()
-                          : _buildShopsList(filteredShops),
-                    ),
             ),
           ],
         ),
@@ -518,8 +965,11 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
         decoration: InputDecoration(
           hintText: 'Search shops...',
           border: InputBorder.none,
-          prefixIcon: const Icon(Icons.search_rounded,
-              color: AppColors.lightTextSecondary, size: 22),
+          prefixIcon: const Icon(
+            Icons.search_rounded,
+            color: AppColors.lightTextSecondary,
+            size: 22,
+          ),
           contentPadding: const EdgeInsets.symmetric(vertical: 12),
           hintStyle: GoogleFonts.poppins(
             color: AppColors.lightTextSecondary,
@@ -560,9 +1010,10 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(
-                  color: showUnpaid
-                      ? AppColors.accentTeal.withOpacity(0.15)
-                      : Colors.transparent,
+                  color:
+                      showUnpaid
+                          ? AppColors.accentTeal.withOpacity(0.15)
+                          : Colors.transparent,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Center(
@@ -570,10 +1021,12 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                     'Unpaid',
                     style: GoogleFonts.poppins(
                       fontSize: 13,
-                      fontWeight: showUnpaid ? FontWeight.w600 : FontWeight.w500,
-                      color: showUnpaid
-                          ? AppColors.accentTeal
-                          : AppColors.lightTextSecondary,
+                      fontWeight:
+                          showUnpaid ? FontWeight.w600 : FontWeight.w500,
+                      color:
+                          showUnpaid
+                              ? AppColors.accentTeal
+                              : AppColors.lightTextSecondary,
                     ),
                   ),
                 ),
@@ -591,9 +1044,10 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(
-                  color: !showUnpaid
-                      ? AppColors.accentTeal.withOpacity(0.15)
-                      : Colors.transparent,
+                  color:
+                      !showUnpaid
+                          ? AppColors.accentTeal.withOpacity(0.15)
+                          : Colors.transparent,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Center(
@@ -601,10 +1055,12 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                     'Paid',
                     style: GoogleFonts.poppins(
                       fontSize: 13,
-                      fontWeight: !showUnpaid ? FontWeight.w600 : FontWeight.w500,
-                      color: !showUnpaid
-                          ? AppColors.accentTeal
-                          : AppColors.lightTextSecondary,
+                      fontWeight:
+                          !showUnpaid ? FontWeight.w600 : FontWeight.w500,
+                      color:
+                          !showUnpaid
+                              ? AppColors.accentTeal
+                              : AppColors.lightTextSecondary,
                     ),
                   ),
                 ),
@@ -622,7 +1078,9 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            showUnpaid ? Icons.shopping_bag_outlined : Icons.check_circle_outline,
+            showUnpaid
+                ? Icons.shopping_bag_outlined
+                : Icons.check_circle_outline,
             size: 80,
             color: AppColors.lightTextSecondary.withOpacity(0.5),
           ),
@@ -651,7 +1109,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
   }
 
   Widget _buildShopsList(List<Map<String, dynamic>> shops) {
-    final canReorder = _searchController.text.trim().isEmpty;
+    final canReorder = _searchController.text.trim().isEmpty && !showUnpaid;
 
     if (!canReorder) {
       return ListView.builder(
@@ -672,29 +1130,20 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
       },
       buildDefaultDragHandles: false,
       proxyDecorator: (child, index, animation) {
-        return Material(
-          color: Colors.transparent,
-          child: child,
-        );
+        return Material(color: Colors.transparent, child: child);
       },
       itemBuilder: (context, index) {
         final shop = shops[index];
         return ReorderableDelayedDragStartListener(
           key: ValueKey(shop['id']),
           index: index,
-          child: _buildShopCard(
-            shop,
-            index,
-          ),
+          child: _buildShopCard(shop, index),
         );
       },
     );
   }
 
-  Widget _buildShopCard(
-    Map<String, dynamic> shop,
-    int index, )
-   {
+  Widget _buildShopCard(Map<String, dynamic> shop, int index) {
     final name = shop['name'];
     final status = shop['status'];
     final paidAt = shop['paidAt'] as DateTime?;
@@ -703,6 +1152,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
     final amount = shop['amount'] ?? 0;
     final latitude = shop['latitude'];
     final longitude = shop['longitude'];
+    final distanceMeters = (shop['distanceMeters'] as num?)?.toDouble();
     int remainingSeconds = 0;
 
     if (shop['status'] == 'Paid' && paidAt != null) {
@@ -719,10 +1169,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
       builder: (context, value, child) {
         return Transform.translate(
           offset: Offset(0, 20 * (1 - value)),
-          child: Opacity(
-            opacity: value,
-            child: child,
-          ),
+          child: Opacity(opacity: value, child: child),
         );
       },
       child: Container(
@@ -734,31 +1181,38 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => BalanceScreen(
-                    shopName: shop['name'],
-                    routeName: widget.routeName,
-                    shopId: shop['id'],
-                    onBalanceAdjusted: (shopName, reducedAmount) async {
-                      final updatedShops =
-                          List<Map<String, dynamic>>.from(allShops);
-                      final shopIndex =
-                          updatedShops.indexWhere((s) => s['name'] == shopName);
-                      if (shopIndex != -1) {
-                        final shopId = updatedShops[shopIndex]['id'] as String;
-                        final now = DateTime.now();
-                        setState(() {
-                          updatedShops[shopIndex]['status'] = 'Paid';
-                          updatedShops[shopIndex]['amount'] = (updatedShops[shopIndex]['amount'] as num) - reducedAmount;
-                          updatedShops[shopIndex]['paidAt'] = now;
-                          updatedShops[shopIndex]['paidAmount'] = reducedAmount;
-                          allShops = updatedShops;
-                          _filterShops();
-                        });
-                        // Start countdown for revert after 12 hours
-                        _startCountdown(shopId, shopName, now);
-                      }
-                    },
-                  ),
+                  builder:
+                      (context) => BalanceScreen(
+                        shopName: shop['name'],
+                        routeName: widget.routeName,
+                        shopId: shop['id'],
+                        onBalanceAdjusted: (shopName, reducedAmount) async {
+                          final updatedShops = List<Map<String, dynamic>>.from(
+                            allShops,
+                          );
+                          final shopIndex = updatedShops.indexWhere(
+                            (s) => s['name'] == shopName,
+                          );
+                          if (shopIndex != -1) {
+                            final shopId =
+                                updatedShops[shopIndex]['id'] as String;
+                            final now = DateTime.now();
+                            setState(() {
+                              updatedShops[shopIndex]['status'] = 'Paid';
+                              updatedShops[shopIndex]['amount'] =
+                                  (updatedShops[shopIndex]['amount'] as num) -
+                                  reducedAmount;
+                              updatedShops[shopIndex]['paidAt'] = now;
+                              updatedShops[shopIndex]['paidAmount'] =
+                                  reducedAmount;
+                              allShops = updatedShops;
+                              _filterShops();
+                            });
+                            // Start countdown for revert after 12 hours
+                            _startCountdown(shopId, shopName, now);
+                          }
+                        },
+                      ),
                 ),
               );
             },
@@ -851,7 +1305,9 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                                     vertical: 4,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF4A3F0F).withOpacity(0.8),
+                                    color: const Color(
+                                      0xFF4A3F0F,
+                                    ).withOpacity(0.8),
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Row(
@@ -875,9 +1331,14 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                                     vertical: 4,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: isPaid
-                                        ? const Color(0xFF1A4D3E).withOpacity(0.8)
-                                        : const Color(0xFF4A2E2E).withOpacity(0.8),
+                                    color:
+                                        isPaid
+                                            ? const Color(
+                                              0xFF1A4D3E,
+                                            ).withOpacity(0.8)
+                                            : const Color(
+                                              0xFF4A2E2E,
+                                            ).withOpacity(0.8),
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(
@@ -885,12 +1346,38 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                                     style: GoogleFonts.poppins(
                                       fontSize: 9,
                                       fontWeight: FontWeight.w600,
-                                      color: isPaid
-                                          ? const Color(0xFF20D9A3)
-                                          : const Color(0xFFD84040),
+                                      color:
+                                          isPaid
+                                              ? const Color(0xFF20D9A3)
+                                              : const Color(0xFFD84040),
                                     ),
                                   ),
                                 ),
+                                if (!isPaid && distanceMeters != null) ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(
+                                        0xFF1A3A5C,
+                                      ).withOpacity(0.8),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      distanceMeters >= 1000
+                                          ? '${(distanceMeters / 1000).toStringAsFixed(1)} km'
+                                          : '${distanceMeters.toStringAsFixed(0)} m',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF7EC8FF),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ],
@@ -922,11 +1409,13 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                                       );
                                     } else {
                                       if (mounted) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
                                           const SnackBar(
                                             content: Text(
-                                                'No maps application found'),
+                                              'No maps application found',
+                                            ),
                                             duration: Duration(seconds: 2),
                                           ),
                                         );
@@ -947,8 +1436,9 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                                 if (mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                      content:
-                                          Text('Location data not available'),
+                                      content: Text(
+                                        'Location data not available',
+                                      ),
                                       duration: Duration(seconds: 2),
                                     ),
                                   );
@@ -959,17 +1449,26 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                               width: 40,
                               height: 40,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF1A3A5C).withOpacity(0.5),
+                                color: const Color.fromARGB(
+                                  255,
+                                  138,
+                                  173,
+                                  211,
+                                ).withOpacity(0.5),
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
-                                  color: const Color(0xFFD84040)
-                                      .withOpacity(0.5),
+                                  color: Color.fromARGB(
+                                    255,
+                                    75,
+                                    206,
+                                    184,
+                                  ).withOpacity(0.5),
                                   width: 1,
                                 ),
                               ),
                               child: const Icon(
                                 Icons.location_on_rounded,
-                                color: Color(0xFFD84040),
+                                color: Color.fromARGB(255, 75, 206, 184),
                                 size: 20,
                               ),
                             ),
@@ -988,11 +1487,13 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                                     );
                                   } else {
                                     if (mounted) {
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
                                         SnackBar(
                                           content: Text(
-                                              'Cannot call $phone - No phone app found'),
+                                            'Cannot call $phone - No phone app found',
+                                          ),
                                           duration: const Duration(seconds: 2),
                                         ),
                                       );
@@ -1012,7 +1513,9 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                                 if (mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                      content: Text('Phone number not available'),
+                                      content: Text(
+                                        'Phone number not available',
+                                      ),
                                       duration: Duration(seconds: 2),
                                     ),
                                   );
@@ -1023,12 +1526,12 @@ class _RouteShopsScreenState extends State<RouteShopsScreen> with TickerProvider
                               width: 40,
                               height: 40,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF1A4D3E)
-                                    .withOpacity(0.5),
+                                color: const Color(0xFF1A4D3E).withOpacity(0.5),
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
-                                  color: const Color(0xFF20D9A3)
-                                      .withOpacity(0.5),
+                                  color: const Color(
+                                    0xFF20D9A3,
+                                  ).withOpacity(0.5),
                                   width: 1,
                                 ),
                               ),
