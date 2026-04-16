@@ -8,9 +8,11 @@ import 'package:pegas_cashcollector/screens/stocklist.dart';
 import 'package:pegas_cashcollector/screens/termsandconditions.dart';
 import 'package:pegas_cashcollector/screens/achievements_screen.dart';
 import 'package:pegas_cashcollector/screens/route_shops_screen.dart';
+import 'package:pegas_cashcollector/screens/daily_payment_shops_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shimmer/shimmer.dart';
 import 'low_level_shops_screen.dart';
 import '../services/mock_data_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -157,11 +159,12 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
 
       print('📍 Loading routes for branch: $branchId');
 
-      // Get all routes for this branch
+      // Get all routes for this branch, ordered by 'order' field
       final routesSnap = await firestore
           .collection('branches')
           .doc(branchId)
           .collection('routes')
+          .orderBy('order', descending: false)
           .get();
           
       if (routesSnap.docs.isEmpty) {
@@ -188,6 +191,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
             'id': routeDoc.id,
             'name': routeDoc.data()['name'] ?? routeDoc.id,
             'shopCount': shopCount,
+            'order': routeDoc.data()['order'] ?? 0,
           });
           
           print('✅ Loaded route: ${routeDoc.id} with $shopCount shops');
@@ -216,6 +220,36 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
     return "$hours:$minutes:$seconds";
   }
 
+  Future<void> _persistRouteOrder() async {
+    try {
+      final branchId = BranchContext().branchId;
+      if (branchId == null) return;
+
+      final firestore = FirebaseFirestore.instance;
+
+      // Update order field for each route
+      for (int i = 0; i < allRoutes.length; i++) {
+        final route = allRoutes[i];
+        await firestore
+            .collection('branches')
+            .doc(branchId)
+            .collection('routes')
+            .doc(route['id'])
+            .update({'order': i});
+      }
+
+      debugPrint('✅ Route order persisted: ${allRoutes.map((r) => r['name']).toList()}');
+    } catch (e) {
+      debugPrint('❌ Error persisting route order: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error saving route order: $e'),
+          backgroundColor: AppColors.errorDark,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -235,24 +269,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                 // Routes List
                 Expanded(
                   child: isRoutesLoading
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              CircularProgressIndicator(
-                                color: AppColors.accentTealDark,
-                                strokeWidth: 3,
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'Loading routes...',
-                                style: GoogleFonts.poppins(
-                                  color: AppColors.lightTextSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
+                      ? _buildSkeletonRoutesList()
                       : RefreshIndicator(
                           onRefresh: _refreshData,
                           color: AppColors.accentTealDark,
@@ -529,6 +546,23 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                         paddingV: menuItemPaddingV,
                       ),
                       _buildDrawerMenuItem(
+                        icon: Icons.calendar_today_rounded,
+                        title: 'Daily Payment Shops',
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const DailyPaymentShopsScreen(),
+                            ),
+                          );
+                        },
+                        fontSize: menuItemFontSize,
+                        iconSize: menuIconSize,
+                        paddingH: menuItemPaddingH,
+                        paddingV: menuItemPaddingV,
+                      ),
+                      _buildDrawerMenuItem(
                         icon: Icons.emoji_events_rounded,
                         title: 'Achievements',
                         onTap: () {
@@ -678,6 +712,95 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
     );
   }  // Search and filter methods removed - now using route view instead of shop view
 
+  Widget _buildSkeletonRoutesList() {
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      itemCount: 5,
+      itemBuilder: (context, index) {
+        return _buildSkeletonRoute(index);
+      },
+    );
+  }
+
+  Widget _buildSkeletonRoute(int index) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: Duration(milliseconds: 300 + (index * 50)),
+      builder: (context, value, child) {
+        return Transform.translate(
+          offset: Offset(0, 20 * (1 - value)),
+          child: Opacity(opacity: value, child: child),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        child: Shimmer.fromColors(
+          baseColor: const Color(0xFF1A3A5C),
+          highlightColor: const Color(0xFF2A5A7C),
+          period: const Duration(milliseconds: 1500),
+          child: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0D2137),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: const Color(0xFF1A3A5C),
+              ),
+            ),
+            child: Row(
+              children: [
+                // Skeleton Icon
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A3A5C),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // Skeleton Content
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 120,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A3A5C),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        width: 80,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A3A5C),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Skeleton Arrow
+                Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A3A5C),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildEmptyState() {
     return Center(
       child: ListView(
@@ -706,12 +829,26 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
   }
 
   Widget _buildRoutesList(List<Map<String, dynamic>> routes) {
-    return ListView.builder(
+    return ReorderableListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 20),
+      onReorder: (oldIndex, newIndex) {
+        setState(() {
+          if (newIndex > oldIndex) {
+            newIndex -= 1;
+          }
+          final route = allRoutes.removeAt(oldIndex);
+          allRoutes.insert(newIndex, route);
+        });
+        _persistRouteOrder();
+      },
       itemCount: routes.length,
       itemBuilder: (context, index) {
         final route = routes[index];
-        return _buildRouteCard(route, index);
+        return ReorderableDelayedDragStartListener(
+          key: ValueKey(route['id']),
+          index: index,
+          child: _buildRouteCard(route, index),
+        );
       },
     );
   }
@@ -764,6 +901,13 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
               ),
               child: Row(
                 children: [
+                  // Drag Handle Icon
+                  Icon(
+                    Icons.drag_handle_rounded,
+                    color: AppColors.accentTeal.withOpacity(0.6),
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
                   // Route Icon
                   Container(
                     padding: const EdgeInsets.all(14),

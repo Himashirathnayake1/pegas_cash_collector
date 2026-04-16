@@ -21,9 +21,15 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
   bool isWeekCollectionLoading = false;
   bool isInitializing = true;
 
+  bool hasBalanceValue = false;
+  bool hasTodayCollectionValue = false;
+  bool hasWeekCollectionValue = false;
+
   double totalBalance = 0.0;
   double todayCollection = 0.0;
   double weekCollection = 0.0;
+
+  DateTime selectedTodayCollectionDate = DateTime.now();
 
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
@@ -35,19 +41,17 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     )..forward();
-    _fadeAnimation =
-        CurvedAnimation(parent: _fadeController, curve: Curves.easeOut);
+    _fadeAnimation = CurvedAnimation(
+      parent: _fadeController,
+      curve: Curves.easeOut,
+    );
     _initializeBalance();
   }
 
   /// Initialize all balance data fetches - runs in parallel for faster loading
   Future<void> _initializeBalance() async {
     try {
-      await Future.wait([
-        _fetchTotalPaidAcrossAllRoutes(),
-        _fetchTotalPaidToday(),
-        _fetchWeekPaid(),
-      ]);
+      await _refreshAllBalances(loadCachedFirst: true);
     } catch (e) {
       print('ERROR in _initializeBalance: $e');
     } finally {
@@ -62,50 +66,209 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
   /// Refresh all balance data
   Future<void> _loadData() async {
     try {
-      await Future.wait([
-        _fetchTotalPaidAcrossAllRoutes(),
-        _fetchTotalPaidToday(),
-        _fetchWeekPaid(),
-      ]);
+      await _refreshAllBalances();
     } catch (e) {
       print('ERROR in _loadData: $e');
     }
   }
 
-  /// Fetch total paid across all routes in this branch
-  Future<void> _fetchTotalPaidAcrossAllRoutes() async {
-    setState(() => isBalanceLoading = true);
+  Future<void> _refreshAllBalances({bool loadCachedFirst = false}) async {
+    final branchId = BranchContext().branchId;
+    if (branchId == null) {
+      print('❌ No branch ID available');
+      return;
+    }
+
+    if (loadCachedFirst) {
+      await _loadCachedValues(branchId);
+    }
+
+    final shopDocs = await _getBranchShops(branchId);
+
+    await Future.wait([
+      _fetchTotalPaidAcrossAllRoutes(branchId, shopDocs),
+      _fetchTotalPaidToday(
+        branchId,
+        shopDocs,
+        targetDate: selectedTodayCollectionDate,
+      ),
+      _fetchWeekPaid(branchId, shopDocs),
+    ]);
+  }
+
+  Future<void> _loadCachedValues(String branchId) async {
     try {
-      final branchId = BranchContext().branchId;
-      if (branchId == null) {
-        print('❌ No branch ID available');
-        setState(() => isBalanceLoading = false);
-        return;
-      }
+      final results = await Future.wait([
+        firestore
+            .collection('branches')
+            .doc(branchId)
+            .collection('admin')
+            .doc('stats')
+            .get(),
+        firestore
+            .collection('branches')
+            .doc(branchId)
+            .collection('admin')
+            .doc('summary')
+            .get(),
+      ]);
 
-      double totalPaid = 0;
+      final statsData = results[0].data();
+      final summaryData = results[1].data();
 
-      // Get all routes in this branch
-      final routesSnapshot = await firestore
-          .collection('branches')
-          .doc(branchId)
-          .collection('routes')
-          .get();
+      if (!mounted) return;
+      setState(() {
+        if (statsData != null) {
+          if (statsData.containsKey('cashcollector_balance')) {
+            totalBalance = _toDouble(statsData['cashcollector_balance']);
+            hasBalanceValue = true;
+          }
+          if (statsData.containsKey('cashcollector_week_paid')) {
+            weekCollection = _toDouble(statsData['cashcollector_week_paid']);
+            hasWeekCollectionValue = true;
+          }
+        }
 
-      // For each route, get all shops and sum totalPaid
-      for (var routeDoc in routesSnapshot.docs) {
-        final shopsSnapshot = await routeDoc.reference
-            .collection('shops')
+        if (summaryData != null && summaryData.containsKey('todaytotalPaid')) {
+          todayCollection = _toDouble(summaryData['todaytotalPaid']);
+          hasTodayCollectionValue = true;
+        }
+      });
+    } catch (e) {
+      print('⚠️ Error loading cached balance values: $e');
+    }
+  }
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _getBranchShops(
+    String branchId,
+  ) async {
+    final routesSnapshot =
+        await firestore
+            .collection('branches')
+            .doc(branchId)
+            .collection('routes')
             .get();
 
-        for (var shopDoc in shopsSnapshot.docs) {
-          final shopData = shopDoc.data();
-          final dynamic paidVal = shopData['totalPaid'];
-          double shopTotalPaid = 0.0;
-          if (paidVal is num) shopTotalPaid = paidVal.toDouble();
-          else if (paidVal is String) shopTotalPaid = double.tryParse(paidVal) ?? 0.0;
-          totalPaid += shopTotalPaid;
+    final shopSnapshots = await Future.wait(
+      routesSnapshot.docs.map(
+        (routeDoc) => routeDoc.reference.collection('shops').get(),
+      ),
+    );
+
+    return [for (final shopSnapshot in shopSnapshots) ...shopSnapshot.docs];
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
+  }
+
+  DateTime _dateOnly(DateTime date) {
+    return DateTime(date.year, date.month, date.day);
+  }
+
+  bool _isSameDate(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  String _formatSelectedDateLabel() {
+    if (_isSameDate(selectedTodayCollectionDate, DateTime.now())) {
+      return 'Today';
+    }
+    return MaterialLocalizations.of(
+      context,
+    ).formatMediumDate(selectedTodayCollectionDate);
+  }
+
+  Future<void> _pickTodayCollectionDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selectedTodayCollectionDate,
+      firstDate: DateTime(now.year - 5, 1, 1),
+      lastDate: now,
+      helpText: 'Select Collection Date',
+    );
+
+    if (picked == null) return;
+
+    final normalizedPicked = _dateOnly(picked);
+    if (_isSameDate(normalizedPicked, selectedTodayCollectionDate)) return;
+
+    if (mounted) {
+      setState(() {
+        selectedTodayCollectionDate = normalizedPicked;
+        isTodayCollectionLoading = true;
+      });
+    }
+
+    final branchId = BranchContext().branchId;
+    if (branchId == null) {
+      print('❌ No branch ID available');
+      return;
+    }
+
+    final shopDocs = await _getBranchShops(branchId);
+    await _fetchTotalPaidToday(
+      branchId,
+      shopDocs,
+      targetDate: selectedTodayCollectionDate,
+    );
+  }
+
+  Future<double> _sumTransactionsInBatches({
+    required List<QueryDocumentSnapshot<Map<String, dynamic>>> shopDocs,
+    required Timestamp start,
+    Timestamp? end,
+    required bool Function(String? type) includeType,
+  }) async {
+    const int batchSize = 20;
+    double total = 0.0;
+
+    for (int i = 0; i < shopDocs.length; i += batchSize) {
+      final batch = shopDocs.skip(i).take(batchSize).toList();
+
+      final snapshots = await Future.wait(
+        batch.map((shopDoc) {
+          Query<Map<String, dynamic>> q = shopDoc.reference
+              .collection('transactions')
+              .where('timestamp', isGreaterThanOrEqualTo: start);
+          if (end != null) {
+            q = q.where('timestamp', isLessThanOrEqualTo: end);
+          }
+          return q.get();
+        }),
+      );
+
+      for (final txSnapshot in snapshots) {
+        for (final txDoc in txSnapshot.docs) {
+          final txData = txDoc.data();
+          final type = txData['type']?.toString();
+          if (includeType(type)) {
+            total += _toDouble(txData['amount']);
+          }
         }
+      }
+    }
+
+    return total;
+  }
+
+  /// Fetch total paid across all routes in this branch
+  Future<void> _fetchTotalPaidAcrossAllRoutes(
+    String branchId,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> shopDocs,
+  ) async {
+    if (mounted) {
+      setState(() => isBalanceLoading = true);
+    }
+    try {
+      double totalPaid = 0;
+
+      for (final shopDoc in shopDocs) {
+        final shopData = shopDoc.data();
+        totalPaid += _toDouble(shopData['totalPaid']);
       }
 
       // Save calculated balance to Firestore
@@ -115,165 +278,133 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
           .collection('admin')
           .doc('stats')
           .update({
-        'cashcollector_balance': totalPaid,
-        'lastUpdated': Timestamp.now(),
-      }).catchError((error) {
-        print('⚠️ Error updating cashcollector_balance: $error');
-      });
+            'cashcollector_balance': totalPaid,
+            'lastUpdated': Timestamp.now(),
+          })
+          .catchError((error) {
+            print('⚠️ Error updating cashcollector_balance: $error');
+          });
 
-      setState(() {
-        totalBalance = totalPaid;
-      });
+      if (mounted) {
+        setState(() {
+          totalBalance = totalPaid;
+          hasBalanceValue = true;
+        });
+      }
       print('✅ Saved cashcollector_balance to Firestore: Rs $totalPaid');
     } catch (e) {
       print('Error in _fetchTotalPaidAcrossAllRoutes: $e');
     } finally {
-      setState(() => isBalanceLoading = false);
+      if (mounted) {
+        setState(() => isBalanceLoading = false);
+      }
     }
   }
 
   /// Fetch total paid today in this branch
-  Future<void> _fetchTotalPaidToday() async {
-    setState(() => isTodayCollectionLoading = true);
+  Future<void> _fetchTotalPaidToday(
+    String branchId,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> shopDocs, {
+    DateTime? targetDate,
+  }) async {
+    if (mounted) {
+      setState(() => isTodayCollectionLoading = true);
+    }
     try {
-      final branchId = BranchContext().branchId;
-      if (branchId == null) {
-        print('❌ No branch ID available');
-        setState(() => isTodayCollectionLoading = false);
-        return;
+      final selectedDate = _dateOnly(targetDate ?? DateTime.now());
+      final dateStartTs = Timestamp.fromDate(selectedDate);
+      final dateEndTs = Timestamp.fromDate(
+        DateTime(
+          selectedDate.year,
+          selectedDate.month,
+          selectedDate.day,
+          23,
+          59,
+          59,
+          999,
+        ),
+      );
+      final isToday = _isSameDate(selectedDate, DateTime.now());
+
+      final totalPaidToday = await _sumTransactionsInBatches(
+        shopDocs: shopDocs,
+        start: dateStartTs,
+        end: dateEndTs,
+        includeType: (type) => type == null || type == 'paid',
+      );
+
+      // Persist only real today's collection, avoid overwriting cache when viewing older dates.
+      if (isToday) {
+        await firestore
+            .collection('branches')
+            .doc(branchId)
+            .collection('admin')
+            .doc('summary')
+            .update({
+              'todaytotalPaid': totalPaidToday,
+              'lastUpdated': Timestamp.now(),
+            })
+            .catchError((error) {
+              print('⚠️ Error updating todaytotalPaid: $error');
+            });
       }
 
-      double totalPaidToday = 0;
-      final now = DateTime.now();
-      final todayStart = DateTime(now.year, now.month, now.day);
-      final todayStartTs = Timestamp.fromDate(todayStart);
-
-      // Get all routes in this branch
-      final routesSnapshot = await firestore
-          .collection('branches')
-          .doc(branchId)
-          .collection('routes')
-          .get();
-
-      // For each route, get all shops and their transactions
-      for (var routeDoc in routesSnapshot.docs) {
-        final shopsSnapshot = await routeDoc.reference
-            .collection('shops')
-            .get();
-
-        for (var shopDoc in shopsSnapshot.docs) {
-          final txSnapshot = await shopDoc.reference
-              .collection('transactions')
-              .where('timestamp', isGreaterThanOrEqualTo: todayStartTs)
-              .get();
-
-          for (var txDoc in txSnapshot.docs) {
-            final txData = txDoc.data();
-            final type = txData['type'];
-            final dynamic amtVal = txData['amount'];
-            double amount = 0.0;
-            if (amtVal is num) amount = amtVal.toDouble();
-            else if (amtVal is String) amount = double.tryParse(amtVal) ?? 0.0;
-            if (type == 'paid' || type == null) {
-              totalPaidToday += amount;
-            }
-          }
-        }
+      if (mounted) {
+        setState(() {
+          todayCollection = totalPaidToday;
+          hasTodayCollectionValue = true;
+        });
       }
-
-      // Save today's collection to Firestore
-      await firestore
-          .collection('branches')
-          .doc(branchId)
-          .collection('admin')
-          .doc('summary')
-          .update({
-        'todaytotalPaid': totalPaidToday,
-        'lastUpdated': Timestamp.now(),
-      }).catchError((error) {
-        print('⚠️ Error updating todaytotalPaid: $error');
-      });
-
-      setState(() {
-        todayCollection = totalPaidToday;
-      });
-      print('✅ Saved todaytotalPaid to Firestore: Rs $totalPaidToday');
+      if (isToday) {
+        print('✅ Saved todaytotalPaid to Firestore: Rs $totalPaidToday');
+      } else {
+        print('✅ Loaded selected date collection: Rs $totalPaidToday');
+      }
     } catch (e) {
       print('Error in _fetchTotalPaidToday: $e');
     } finally {
-      setState(() => isTodayCollectionLoading = false);
+      if (mounted) {
+        setState(() => isTodayCollectionLoading = false);
+      }
     }
   }
 
   /// Fetch total paid this week in this branch
-  Future<void> _fetchWeekPaid() async {
-    setState(() => isWeekCollectionLoading = true);
+  Future<void> _fetchWeekPaid(
+    String branchId,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> shopDocs,
+  ) async {
+    if (mounted) {
+      setState(() => isWeekCollectionLoading = true);
+    }
     try {
-      final branchId = BranchContext().branchId;
-      if (branchId == null) {
-        print('❌ No branch ID available');
-        setState(() => isWeekCollectionLoading = false);
-        return;
-      }
-
       final now = DateTime.now();
       final int currentWeekday = now.weekday;
-      final DateTime mondayThisWeek = now.subtract(Duration(days: currentWeekday - 1));
-      final DateTime sundayThisWeek = mondayThisWeek.add(const Duration(days: 6));
+      final DateTime mondayThisWeek = now.subtract(
+        Duration(days: currentWeekday - 1),
+      );
 
-      final Timestamp startOfWeek = Timestamp.fromDate(DateTime(
-        mondayThisWeek.year,
-        mondayThisWeek.month,
-        mondayThisWeek.day,
-        0,
-        0,
-        0,
-      ));
+      final Timestamp startOfWeek = Timestamp.fromDate(
+        DateTime(
+          mondayThisWeek.year,
+          mondayThisWeek.month,
+          mondayThisWeek.day,
+          0,
+          0,
+          0,
+        ),
+      );
 
-      final Timestamp endOfWeek = Timestamp.fromDate(DateTime(
-        sundayThisWeek.year,
-        sundayThisWeek.month,
-        sundayThisWeek.day,
-        23,
-        59,
-        59,
-      ));
+      // Week-to-date: include only completed time from Monday 00:00 up to now.
+      final Timestamp endOfWeek = Timestamp.fromDate(now);
 
-      double total = 0;
-
-      // Get all routes in this branch
-      final routesSnapshot = await firestore
-          .collection('branches')
-          .doc(branchId)
-          .collection('routes')
-          .get();
-
-      // For each route, get all shops and their transactions in week range
-      for (var routeDoc in routesSnapshot.docs) {
-        final shopsSnapshot = await routeDoc.reference
-            .collection('shops')
-            .get();
-
-        for (var shopDoc in shopsSnapshot.docs) {
-          final txSnapshot = await shopDoc.reference
-              .collection('transactions')
-              .where('timestamp', isGreaterThanOrEqualTo: startOfWeek)
-              .where('timestamp', isLessThanOrEqualTo: endOfWeek)
-              .get();
-
-          for (var txDoc in txSnapshot.docs) {
-            final txData = txDoc.data();
-            final type = txData['type'];
-            final dynamic amtVal = txData['amount'];
-            double amount = 0.0;
-            if (amtVal is num) amount = amtVal.toDouble();
-            else if (amtVal is String) amount = double.tryParse(amtVal) ?? 0.0;
-            if (type == null || type == 'paid' || type != 'Credit') {
-              total += amount;
-            }
-          }
-        }
-      }
+      final total = await _sumTransactionsInBatches(
+        shopDocs: shopDocs,
+        start: startOfWeek,
+        end: endOfWeek,
+        includeType:
+            (type) => type == null || type != 'Credit' || type == 'paid',
+      );
 
       // Save week's collection to Firestore
       await firestore
@@ -282,21 +413,27 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
           .collection('admin')
           .doc('stats')
           .update({
-        'cashcollector_week_paid': total,
-        'lastUpdated': Timestamp.now(),
-      }).catchError((error) {
-        print('⚠️ Error updating cashcollector_week_paid: $error');
-      });
+            'cashcollector_week_paid': total,
+            'lastUpdated': Timestamp.now(),
+          })
+          .catchError((error) {
+            print('⚠️ Error updating cashcollector_week_paid: $error');
+          });
 
       print('✅ Saved cashcollector_week_paid to Firestore: Rs $total');
 
-      setState(() {
-        weekCollection = total;
-      });
+      if (mounted) {
+        setState(() {
+          weekCollection = total;
+          hasWeekCollectionValue = true;
+        });
+      }
     } catch (e) {
       print('Error in _fetchWeekPaid: $e');
     } finally {
-      setState(() => isWeekCollectionLoading = false);
+      if (mounted) {
+        setState(() => isWeekCollectionLoading = false);
+      }
     }
   }
 
@@ -360,8 +497,10 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
         children: [
           IconButton(
             onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back_ios_rounded,
-                color: AppColors.lightTextPrimary),
+            icon: const Icon(
+              Icons.arrow_back_ios_rounded,
+              color: AppColors.lightTextPrimary,
+            ),
             style: IconButton.styleFrom(
               backgroundColor: AppColors.lightCardBorder,
               padding: const EdgeInsets.all(12),
@@ -379,8 +518,10 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
           const Spacer(),
           IconButton(
             onPressed: _loadData,
-            icon: const Icon(Icons.refresh_rounded,
-                color: AppColors.lightTextPrimary),
+            icon: const Icon(
+              Icons.refresh_rounded,
+              color: AppColors.lightTextPrimary,
+            ),
             style: IconButton.styleFrom(
               backgroundColor: AppColors.lightCardBorder,
               padding: const EdgeInsets.all(12),
@@ -399,10 +540,7 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            AppColors.accentTealDark,
-            AppColors.accentBlueDark,
-          ],
+          colors: [AppColors.accentTealDark, AppColors.accentBlueDark],
         ),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
@@ -437,33 +575,33 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
             ),
           ),
           const SizedBox(height: 12),
-          isBalanceLoading
+          (isBalanceLoading && !hasBalanceValue)
               ? const SpinKitThreeBounce(color: Colors.white, size: 28)
               : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Rs.',
-                      style: GoogleFonts.poppins(
-                        fontSize: 24,
-                        color: Colors.white.withOpacity(0.9),
-                        fontWeight: FontWeight.w500,
-                      ),
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Rs.',
+                    style: GoogleFonts.poppins(
+                      fontSize: 24,
+                      color: Colors.white.withOpacity(0.9),
+                      fontWeight: FontWeight.w500,
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      totalBalance % 1 == 0
-                          ? totalBalance.toInt().toString()
-                          : totalBalance.toString(),
-                      style: GoogleFonts.poppins(
-                        fontSize: 44,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    totalBalance % 1 == 0
+                        ? totalBalance.toInt().toString()
+                        : totalBalance.toString(),
+                    style: GoogleFonts.poppins(
+                      fontSize: 44,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
                     ),
-                  ],
-                ),
+                  ),
+                ],
+              ),
           const SizedBox(height: 8),
           Text(
             'Total amount collected',
@@ -480,29 +618,111 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
   Widget _buildStatsRow() {
     return Row(
       children: [
-        Expanded(
-            child: _buildStatCard(
-          'Today\'s Collection',
-          todayCollection,
-          Icons.today_rounded,
-          AppColors.successDark,
-          isTodayCollectionLoading,
-        )),
+        Expanded(child: _buildTodayCollectionCard()),
         const SizedBox(width: 16),
         Expanded(
-            child: _buildStatCard(
-          'This Week',
-          weekCollection,
-          Icons.date_range_rounded,
-          AppColors.accentPurpleDark,
-          isWeekCollectionLoading,
-        )),
+          child: _buildStatCard(
+            'This Week',
+            weekCollection,
+            Icons.date_range_rounded,
+            AppColors.accentPurpleDark,
+            isWeekCollectionLoading && !hasWeekCollectionValue,
+          ),
+        ),
       ],
     );
   }
 
+  Widget _buildTodayCollectionCard() {
+    final color = AppColors.successDark;
+    final isLoading = isTodayCollectionLoading;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.lightSurface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.lightCardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  'Today\'s Collection',
+                  style: GoogleFonts.poppins(
+                    fontSize: 12,
+                    color: AppColors.lightTextSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.today_rounded, color: color, size: 18),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: _pickTodayCollectionDate,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.calendar_month_rounded, size: 16, color: color),
+                  const SizedBox(width: 6),
+                  Text(
+                    _formatSelectedDateLabel(),
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: color,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          isLoading
+              ? SpinKitThreeBounce(color: color, size: 18)
+              : Text(
+                'Rs. $todayCollection',
+                style: GoogleFonts.poppins(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStatCard(
-      String title, double amount, IconData icon, Color color, bool isLoading) {
+    String title,
+    double amount,
+    IconData icon,
+    Color color,
+    bool isLoading,
+  ) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -547,13 +767,13 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
           isLoading
               ? SpinKitThreeBounce(color: color, size: 18)
               : Text(
-                  'Rs. $amount',
-                  style: GoogleFonts.poppins(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    color: color,
-                  ),
+                'Rs. $amount',
+                style: GoogleFonts.poppins(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: color,
                 ),
+              ),
         ],
       ),
     );
@@ -586,8 +806,11 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
                   color: AppColors.accentBlueDark.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.history_rounded,
-                    color: AppColors.accentBlueDark, size: 22),
+                child: const Icon(
+                  Icons.history_rounded,
+                  color: AppColors.accentBlueDark,
+                  size: 22,
+                ),
               ),
               const SizedBox(width: 14),
               Text(
@@ -602,19 +825,36 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
           ),
           const SizedBox(height: 20),
           _buildSummaryRow(
-              'Total Collected', totalBalance, AppColors.accentTealDark, isBalanceLoading),
+            'Total Collected',
+            totalBalance,
+            AppColors.accentTealDark,
+            isBalanceLoading && !hasBalanceValue,
+          ),
           const Divider(height: 24, color: AppColors.lightCardBorder),
           _buildSummaryRow(
-              'Today\'s Amount', todayCollection, AppColors.successDark, isTodayCollectionLoading),
+            '${_formatSelectedDateLabel()} Amount',
+            todayCollection,
+            AppColors.successDark,
+            isTodayCollectionLoading,
+          ),
           const Divider(height: 24, color: AppColors.lightCardBorder),
           _buildSummaryRow(
-              'Week\'s Amount', weekCollection, AppColors.accentPurpleDark, isWeekCollectionLoading),
+            'Week\'s Amount',
+            weekCollection,
+            AppColors.accentPurpleDark,
+            isWeekCollectionLoading && !hasWeekCollectionValue,
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildSummaryRow(String label, double amount, Color color, bool isLoading) {
+  Widget _buildSummaryRow(
+    String label,
+    double amount,
+    Color color,
+    bool isLoading,
+  ) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -629,13 +869,13 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
         isLoading
             ? SpinKitThreeBounce(color: color, size: 14)
             : Text(
-                'Rs. $amount',
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: color,
-                ),
+              'Rs. $amount',
+              style: GoogleFonts.poppins(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: color,
               ),
+            ),
       ],
     );
   }

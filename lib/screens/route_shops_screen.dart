@@ -125,22 +125,23 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
       for (var shopDoc in shopsSnap.docs) {
         final data = shopDoc.data();
 
-        // Filter: Only show shops with amount >= 0
+        // Filter: Only show shops with amount >= 1
         final dynamic amountVal = data['amount'];
-        double amount = 0.0;
+        double amount = 1.0;
         if (amountVal is num)
           amount = amountVal.toDouble();
         else if (amountVal is String)
           amount = double.tryParse(amountVal) ?? 0.0;
 
-        if (amount < 0) {
-          print('⏭️  Skipping shop ${shopDoc.id}: amount ${amount} < 0');
-          continue; // Skip shops with amount < 0
+        if (amount < 1) {
+          print('⏭️  Skipping shop ${shopDoc.id}: amount ${amount} < 1');
+          continue; // Skip shops with amount < 1
         }
 
         final rawStatus = ((data['status'] as String?) ?? 'Unpaid').trim();
         String status = rawStatus == 'Paid' ? 'Paid' : 'Unpaid';
         DateTime? paidAt;
+        DateTime? feedbackedUntil;
         if (data['paidAt'] != null) {
           final v = data['paidAt'];
           if (v is Timestamp)
@@ -148,6 +149,20 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
           else if (v is DateTime)
             paidAt = v;
         }
+
+        if (data['feedbackedUntil'] != null) {
+          final v = data['feedbackedUntil'];
+          if (v is Timestamp) {
+            feedbackedUntil = v.toDate();
+          } else if (v is DateTime) {
+            feedbackedUntil = v;
+          }
+        }
+
+        final isFeedbacked =
+            (data['feedbacked'] == true) &&
+            feedbackedUntil != null &&
+            feedbackedUntil.isAfter(now);
 
         if (status == 'Paid' && paidAt != null) {
           final difference = now.difference(paidAt).inSeconds;
@@ -161,11 +176,14 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
           'name': data['name'] ?? '',
           'address': data['address'] ?? '',
           'phone': data['phone'] ?? '',
+          'collectionType': data['collectionType']?.toString() ?? 'daily',
           'status': status,
           'amount': amount,
           'totalPaid': data['totalPaid'] ?? 0,
           'paidAmount': data['paidAmount'] ?? 0,
           'paidAt': paidAt,
+          'feedbacked': isFeedbacked,
+          'feedbackedUntil': feedbackedUntil,
           'latitude': data['latitude'],
           'longitude': data['longitude'],
           'orderNumber':
@@ -210,20 +228,84 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
   void _filterShops() {
     filteredShops =
         allShops.where((shop) {
+          final hideFromScreen = _shouldHideByCollectionType(shop);
           final matchStatus =
               showUnpaid
                   ? shop['status'] == 'Unpaid'
                   : shop['status'] == 'Paid';
+          final matchCollectionType =
+              !showUnpaid || _isShopDueByCollectionType(shop);
           final matchSearch = shop['name'].toLowerCase().contains(
             _searchController.text.toLowerCase(),
           );
           final hasValidAmount = showUnpaid || shop['amount'] != null;
-          return matchStatus && matchSearch && hasValidAmount;
+          return
+              !hideFromScreen &&
+              matchStatus &&
+              matchCollectionType &&
+              matchSearch &&
+              hasValidAmount;
         }).toList();
 
     if (showUnpaid) {
       _sortFilteredShopsByDistance();
     }
+  }
+
+  bool _shouldHideByCollectionType(Map<String, dynamic> shop) {
+    final rawType = shop['collectionType'];
+    final normalizedType = rawType
+        ?.toString()
+        .toLowerCase()
+        .replaceAll(' ', '')
+        .replaceAll('-', '');
+
+    return normalizedType == '0';
+  }
+
+  bool _isShopDueByCollectionType(Map<String, dynamic> shop) {
+    final now = DateTime.now();
+    final rawType = shop['collectionType']?.toString() ?? 'daily';
+    final normalizedType = rawType
+        .toLowerCase()
+        .replaceAll(' ', '')
+        .replaceAll('-', '');
+    final paidAt = shop['paidAt'] as DateTime?;
+
+    // If never paid before, keep visible for collection.
+    if (paidAt == null) {
+      return true;
+    }
+
+    // Use calendar days (date-only), not 24-hour blocks.
+    final paidDay = DateTime(paidAt.year, paidAt.month, paidAt.day);
+    final today = DateTime(now.year, now.month, now.day);
+    final daysSincePaid = today.difference(paidDay).inDays;
+
+    if (normalizedType == 'daily') {
+      return true;
+    }
+
+    if (normalizedType == 'twoday' ||
+        normalizedType == 'twodays' ||
+        normalizedType == '2day' ||
+        normalizedType == '2days') {
+      return daysSincePaid >= 2;
+    }
+
+    if (normalizedType == 'threeday' ||
+        normalizedType == 'threedays' ||
+        normalizedType == '3day' ||
+        normalizedType == '3days') {
+      return daysSincePaid >= 3;
+    }
+
+    if (normalizedType == 'weekly') {
+      return daysSincePaid >= 7;
+    }
+
+    // Unknown collectionType defaults to visible to avoid hiding shops unexpectedly.
+    return true;
   }
 
   Future<void> _refreshCurrentPosition() async {
@@ -749,7 +831,13 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
           .doc(widget.routeId)
           .collection('shops')
           .doc(shopId)
-          .update({'status': 'Unpaid', 'paidAt': null});
+          .update({
+            'status': 'Unpaid',
+            'paidAt': null,
+            'feedbacked': false,
+            'feedbackedAt': null,
+            'feedbackedUntil': null,
+          });
 
       // Update local state
       final shopIndex = allShops.indexWhere((s) => s['id'] == shopId);
@@ -757,6 +845,8 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
         setState(() {
           allShops[shopIndex]['status'] = 'Unpaid';
           allShops[shopIndex]['paidAt'] = null;
+          allShops[shopIndex]['feedbacked'] = false;
+          allShops[shopIndex]['feedbackedUntil'] = null;
           _filterShops();
         });
       }
@@ -1147,6 +1237,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
     final name = shop['name'];
     final status = shop['status'];
     final paidAt = shop['paidAt'] as DateTime?;
+    final isFeedbacked = (shop['feedbacked'] as bool?) ?? false;
     final phone = shop['phone'] ?? 'N/A';
     final address = shop['address'] ?? 'Unknown';
     final amount = shop['amount'] ?? 0;
@@ -1205,6 +1296,8 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
                               updatedShops[shopIndex]['paidAt'] = now;
                               updatedShops[shopIndex]['paidAmount'] =
                                   reducedAmount;
+                              updatedShops[shopIndex]['feedbacked'] = false;
+                              updatedShops[shopIndex]['feedbackedUntil'] = null;
                               allShops = updatedShops;
                               _filterShops();
                             });
@@ -1353,6 +1446,29 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
                                     ),
                                   ),
                                 ),
+                                if (isPaid && isFeedbacked) ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(
+                                        0xFF4A2455,
+                                      ).withOpacity(0.85),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      'feedbacked',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFFF0B3FF),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                                 if (!isPaid && distanceMeters != null) ...[
                                   const SizedBox(width: 8),
                                   Container(

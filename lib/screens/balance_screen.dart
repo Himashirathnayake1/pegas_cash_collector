@@ -5,6 +5,7 @@ import 'package:flutter_bluetooth_printer/flutter_bluetooth_printer.dart'
     as printer;
 import 'package:google_fonts/google_fonts.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:loading_animation_widget/loading_animation_widget.dart';
 import '../utils/app_theme.dart';
 import '../services/branch_context.dart';
 
@@ -53,8 +54,10 @@ class _BalanceScreenState extends State<BalanceScreen>
       vsync: this,
       duration: const Duration(milliseconds: 600),
     )..forward();
-    _fadeAnimation =
-        CurvedAnimation(parent: _fadeController, curve: Curves.easeOut);
+    _fadeAnimation = CurvedAnimation(
+      parent: _fadeController,
+      curve: Curves.easeOut,
+    );
   }
 
   @override
@@ -66,7 +69,7 @@ class _BalanceScreenState extends State<BalanceScreen>
   Future<void> _fetchBalance() async {
     try {
       final branchId = BranchContext().branchId;
-      
+
       // Build shop reference with branch context
       final shopRef = firestore
           .collection('branches')
@@ -138,36 +141,43 @@ class _BalanceScreenState extends State<BalanceScreen>
       });
 
       // Fetch transactions for this shop (matching CashCollector pattern)
-      final txSnapshot = await shopRef
-          .collection('transactions')
-          .orderBy('timestamp', descending: true)
-          .get();
+      final txSnapshot =
+          await shopRef
+              .collection('transactions')
+              .orderBy('timestamp', descending: true)
+              .get();
 
       debugPrint('Transaction docs fetched: ${txSnapshot.docs.length}');
 
       // Filter transactions where type == 'paid' OR type is missing (like CashCollector)
-      final txList = txSnapshot.docs.where((doc) {
-        final type = doc.data()['type'];
-        return type == 'paid' || type == null;
-      }).map<Map<String, dynamic>>((doc) {
-        final data = doc.data();
-        double txAmount = 0.0;
-        final txAmountValue = data['amount'];
-        if (txAmountValue is double) {
-          txAmount = txAmountValue;
-        } else if (txAmountValue is int) {
-          txAmount = txAmountValue.toDouble();
-        } else if (txAmountValue is String) {
-          txAmount = double.tryParse(txAmountValue) ?? 0.0;
-        }
+      final txList =
+          txSnapshot.docs
+              .where((doc) {
+                final type = doc.data()['type'];
+                return type == 'paid' || type == null;
+              })
+              .map<Map<String, dynamic>>((doc) {
+                final data = doc.data();
+                double txAmount = 0.0;
+                final txAmountValue = data['amount'];
+                if (txAmountValue is double) {
+                  txAmount = txAmountValue;
+                } else if (txAmountValue is int) {
+                  txAmount = txAmountValue.toDouble();
+                } else if (txAmountValue is String) {
+                  txAmount = double.tryParse(txAmountValue) ?? 0.0;
+                }
 
-        return {
-          'time': (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
-          'amount': txAmount,
-          'type': data['type'] ?? 'Cash',
-          'store': widget.shopName,
-        };
-      }).toList();
+                return {
+                  'time':
+                      (data['timestamp'] as Timestamp?)?.toDate() ??
+                      DateTime.now(),
+                  'amount': txAmount,
+                  'type': data['type'] ?? 'Cash',
+                  'store': widget.shopName,
+                };
+              })
+              .toList();
 
       setState(() {
         transactions = txList;
@@ -186,22 +196,21 @@ class _BalanceScreenState extends State<BalanceScreen>
   Future<void> _fetchBranchDetails() async {
     try {
       final branchId = BranchContext().branchId;
-      
-      final branchDoc = await firestore
-          .collection('branches')
-          .doc(branchId)
-          .get();
+
+      final branchDoc =
+          await firestore.collection('branches').doc(branchId).get();
 
       if (branchDoc.exists) {
         final data = branchDoc.data() ?? {};
-        
+
         setState(() {
-          branchName = (branchId != null && branchId.isNotEmpty) 
-              ? branchId[0].toUpperCase() + branchId.substring(1) 
-              : 'Pegas Flex';
+          branchName =
+              (branchId != null && branchId.isNotEmpty)
+                  ? branchId[0].toUpperCase() + branchId.substring(1)
+                  : 'Pegas Flex';
           branchPhone = data['phoneNumber'] ?? '';
         });
-        
+
         debugPrint('📱 Branch details fetched: $branchName, $branchPhone');
       }
     } catch (e) {
@@ -243,30 +252,37 @@ class _BalanceScreenState extends State<BalanceScreen>
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      children: products.map((product) {
-                        final isSelected = selectedProducts.contains(product);
-                        return FilterChip(
-                          selected: isSelected,
-                          label: Text(product),
-                          selectedColor: Colors.blueGrey.withOpacity(0.2),
-                          showCheckmark: false,
-                          onSelected: (val) {
-                            setStateDialog(() {
-                              if (val) {
-                                selectedProducts.add(product);
-                              } else {
-                                selectedProducts.remove(product);
-                              }
-                            });
-                          },
-                          avatar: isSelected
-                              ? const Icon(Icons.check,
-                                  size: 18, color: Colors.blueGrey)
-                              : const SizedBox.shrink(),
-                          backgroundColor: Colors.grey[200],
-                          labelStyle: const TextStyle(color: Colors.black),
-                        );
-                      }).toList(),
+                      children:
+                          products.map((product) {
+                            final isSelected = selectedProducts.contains(
+                              product,
+                            );
+                            return FilterChip(
+                              selected: isSelected,
+                              label: Text(product),
+                              selectedColor: Colors.blueGrey.withOpacity(0.2),
+                              showCheckmark: false,
+                              onSelected: (val) {
+                                setStateDialog(() {
+                                  if (val) {
+                                    selectedProducts.add(product);
+                                  } else {
+                                    selectedProducts.remove(product);
+                                  }
+                                });
+                              },
+                              avatar:
+                                  isSelected
+                                      ? const Icon(
+                                        Icons.check,
+                                        size: 18,
+                                        color: Colors.blueGrey,
+                                      )
+                                      : const SizedBox.shrink(),
+                              backgroundColor: Colors.grey[200],
+                              labelStyle: const TextStyle(color: Colors.black),
+                            );
+                          }).toList(),
                     ),
                   ],
                 ),
@@ -280,43 +296,47 @@ class _BalanceScreenState extends State<BalanceScreen>
                   ),
                 ),
                 ElevatedButton(
-                  onPressed: _isProcessing
-                      ? null
-                      : () async {
-                          if (selectedProducts.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
+                  onPressed:
+                      _isProcessing
+                          ? null
+                          : () async {
+                            if (selectedProducts.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
                                   content: Text(
-                                      "Please select at least one product")),
-                            );
-                            return;
-                          }
+                                    "Please select at least one product",
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
 
-                          setStateDialog(() {
-                            _isProcessing = true;
-                          });
+                            setStateDialog(() {
+                              _isProcessing = true;
+                            });
 
-                          await _placeOrder();
+                            await _placeOrder();
 
-                          setStateDialog(() {
-                            _isProcessing = false;
-                          });
+                            setStateDialog(() {
+                              _isProcessing = false;
+                            });
 
-                          Navigator.pop(context);
-                        },
-                  child: _isProcessing
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
+                            Navigator.pop(context);
+                          },
+                  child:
+                      _isProcessing
+                          ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                          : const Text(
+                            "Order",
+                            style: TextStyle(color: Colors.orange),
                           ),
-                        )
-                      : const Text(
-                          "Order",
-                          style: TextStyle(color: Colors.orange),
-                        ),
                 ),
               ],
             );
@@ -329,7 +349,7 @@ class _BalanceScreenState extends State<BalanceScreen>
   // Place order to Firestore
   Future<void> _changeShopOrder() async {
     final branchId = BranchContext().branchId;
-    
+
     // Build shop reference with branch context
     final shopRef = firestore
         .collection('branches')
@@ -405,7 +425,8 @@ class _BalanceScreenState extends State<BalanceScreen>
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                            "✅ Order updated to #$orderNumber for ${widget.shopName}"),
+                          "✅ Order updated to #$orderNumber for ${widget.shopName}",
+                        ),
                         backgroundColor: Colors.green,
                       ),
                     );
@@ -439,7 +460,7 @@ class _BalanceScreenState extends State<BalanceScreen>
   Future<void> _placeOrder() async {
     try {
       final branchId = BranchContext().branchId;
-      
+
       // Get current location
       String? currentLatitude;
       String? currentLongitude;
@@ -489,9 +510,11 @@ class _BalanceScreenState extends State<BalanceScreen>
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(currentLatitude != null
-              ? "✅ Order placed with location for ${widget.shopName}"
-              : "✅ Order placed for ${widget.shopName}"),
+          content: Text(
+            currentLatitude != null
+                ? "✅ Order placed with location for ${widget.shopName}"
+                : "✅ Order placed for ${widget.shopName}",
+          ),
           backgroundColor: Colors.green,
         ),
       );
@@ -520,7 +543,8 @@ class _BalanceScreenState extends State<BalanceScreen>
             return AlertDialog(
               backgroundColor: AppColors.lightSurface,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24)),
+                borderRadius: BorderRadius.circular(24),
+              ),
               title: Row(
                 children: [
                   Container(
@@ -529,8 +553,11 @@ class _BalanceScreenState extends State<BalanceScreen>
                       color: AppColors.accentTealDark.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(Icons.edit_rounded,
-                        color: AppColors.accentTealDark, size: 22),
+                    child: const Icon(
+                      Icons.edit_rounded,
+                      color: AppColors.accentTealDark,
+                      size: 22,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Text(
@@ -574,7 +601,8 @@ class _BalanceScreenState extends State<BalanceScreen>
                         child: TextField(
                           controller: controller,
                           keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
+                            decimal: true,
+                          ),
                           style: GoogleFonts.poppins(
                             color: AppColors.lightTextPrimary,
                             fontSize: 20,
@@ -589,13 +617,16 @@ class _BalanceScreenState extends State<BalanceScreen>
                             ),
                             border: InputBorder.none,
                             contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 20, vertical: 18),
+                              horizontal: 20,
+                              vertical: 18,
+                            ),
                             prefixIcon: Container(
                               padding: const EdgeInsets.all(12),
                               child: Icon(
                                 Icons.currency_rupee_rounded,
-                                color:
-                                    AppColors.accentTealDark.withOpacity(0.7),
+                                color: AppColors.accentTealDark.withOpacity(
+                                  0.7,
+                                ),
                                 size: 24,
                               ),
                             ),
@@ -614,134 +645,147 @@ class _BalanceScreenState extends State<BalanceScreen>
                   child: Text(
                     "Cancel",
                     style: GoogleFonts.poppins(
-                        color: AppColors.lightTextSecondary),
+                      color: AppColors.lightTextSecondary,
+                    ),
                   ),
                 ),
                 ElevatedButton(
-                  onPressed: _isProcessing
-                      ? null
-                      : () async {
-                          final input = controller.text;
-                          final double? reduction = double.tryParse(input);
+                  onPressed:
+                      _isProcessing
+                          ? null
+                          : () async {
+                            final input = controller.text;
+                            final double? reduction = double.tryParse(input);
 
-                          if (reduction != null &&
-                              reduction > 299 &&
-                              reduction <= (balanceAmount ?? 0)) {
-                            setStateDialog(() {
-                              _isProcessing = true;
-                            });
-
-                            final oldBalance = balanceAmount ?? 0;
-                            final newBalance = oldBalance - reduction;
-
-                            try {
-                              final branchId = BranchContext().branchId;
-
-                              // Update balance in Firestore with comprehensive fields (CashCollector pattern)
-                              final updateData = {
-                                'amount': newBalance,  // Match CashCollector field name
-                                'status': newBalance == 0 ? 'Unpaid' : 'Paid',
-                                'paidAmount': reduction,
-                                'totalPaid': FieldValue.increment(reduction),
-                              };
-
-                              if (newBalance > 0) {
-                                updateData['paidAt'] = FieldValue.serverTimestamp();
-                              }
-
-                              await firestore
-                                  .collection('branches')
-                                  .doc(branchId)
-                                  .collection('routes')
-                                  .doc(widget.routeName)
-                                  .collection('shops')
-                                  .doc(widget.shopId)
-                                  .update(updateData);
-
-                              // Add transaction record in Firestore
-                              await firestore
-                                  .collection('branches')
-                                  .doc(branchId)
-                                  .collection('routes')
-                                  .doc(widget.routeName)
-                                  .collection('shops')
-                                  .doc(widget.shopId)
-                                  .collection('transactions')
-                                  .add({
-                                'amount': reduction,
-                                'type': 'paid',
-                                'timestamp': FieldValue.serverTimestamp(),
-                                'description': 'Payment collection',
-                              });
-
-                              // Update via callback for parent screen
-                              widget.onBalanceAdjusted(
-                                  widget.shopName, reduction);
-
-                              setState(() {
-                                balanceAmount = newBalance;
-                                _isProcessing = false;
-                              });
-
-                              await _fetchBalance();
-
-                              Navigator.pop(context);
-
-                              _showReceiptDialog(
-                                shopName: widget.shopName,
-                                oldBalance: oldBalance,
-                                reducedAmount: reduction,
-                                newBalance: newBalance,
-                              );
-                            } catch (e) {
-                              setState(() {
-                                _isProcessing = false;
-                              });
+                            if (reduction != null &&
+                                reduction > 299 &&
+                                reduction <= (balanceAmount ?? 0)) {
                               setStateDialog(() {
-                                _isProcessing = false;
+                                _isProcessing = true;
                               });
 
+                              final oldBalance = balanceAmount ?? 0;
+                              final newBalance = oldBalance - reduction;
+
+                              try {
+                                final branchId = BranchContext().branchId;
+
+                                // Update balance in Firestore with comprehensive fields (CashCollector pattern)
+                                final updateData = {
+                                  'amount':
+                                      newBalance, // Match CashCollector field name
+                                  'status': newBalance == 0 ? 'Unpaid' : 'Paid',
+                                  'paidAmount': reduction,
+                                  'totalPaid': FieldValue.increment(reduction),
+                                };
+
+                                if (newBalance > 0) {
+                                  updateData['paidAt'] =
+                                      FieldValue.serverTimestamp();
+                                }
+
+                                await firestore
+                                    .collection('branches')
+                                    .doc(branchId)
+                                    .collection('routes')
+                                    .doc(widget.routeName)
+                                    .collection('shops')
+                                    .doc(widget.shopId)
+                                    .update(updateData);
+
+                                // Add transaction record in Firestore
+                                await firestore
+                                    .collection('branches')
+                                    .doc(branchId)
+                                    .collection('routes')
+                                    .doc(widget.routeName)
+                                    .collection('shops')
+                                    .doc(widget.shopId)
+                                    .collection('transactions')
+                                    .add({
+                                      'amount': reduction,
+                                      'type': 'paid',
+                                      'timestamp': FieldValue.serverTimestamp(),
+                                      'description': 'Payment collection',
+                                    });
+
+                                // Update via callback for parent screen
+                                widget.onBalanceAdjusted(
+                                  widget.shopName,
+                                  reduction,
+                                );
+
+                                setState(() {
+                                  balanceAmount = newBalance;
+                                  _isProcessing = false;
+                                });
+
+                                await _fetchBalance();
+
+                                Navigator.pop(context);
+
+                                _showReceiptDialog(
+                                  shopName: widget.shopName,
+                                  oldBalance: oldBalance,
+                                  reducedAmount: reduction,
+                                  newBalance: newBalance,
+                                );
+                              } catch (e) {
+                                setState(() {
+                                  _isProcessing = false;
+                                });
+                                setStateDialog(() {
+                                  _isProcessing = false;
+                                });
+
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text("Error reducing balance: $e"),
+                                    backgroundColor: AppColors.errorDark,
+                                  ),
+                                );
+                              }
+                            } else {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text("Error reducing balance: $e"),
+                                  content: Text(
+                                    reduction != null && reduction <= 299
+                                        ? "Minimum amount is 300"
+                                        : "Invalid amount entered",
+                                    style: GoogleFonts.poppins(),
+                                  ),
                                   backgroundColor: AppColors.errorDark,
                                 ),
                               );
                             }
-                          } else {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  reduction != null && reduction <= 299
-                                      ? "Minimum amount is 300"
-                                      : "Invalid amount entered",
-                                  style: GoogleFonts.poppins(),
-                                ),
-                                backgroundColor: AppColors.errorDark,
-                              ),
-                            );
-                          }
-                        },
+                          },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.accentTealDark,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 12),
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
-                  child: _isProcessing
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
-                        )
-                      : Text(
-                          "Confirm",
-                          style:
-                              GoogleFonts.poppins(fontWeight: FontWeight.w600),
-                        ),
+                  child:
+                      _isProcessing
+                          ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                          : Text(
+                            "Confirm",
+                            style: GoogleFonts.poppins(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                 ),
               ],
             );
@@ -762,8 +806,9 @@ class _BalanceScreenState extends State<BalanceScreen>
       builder: (context) {
         return AlertDialog(
           backgroundColor: AppColors.lightSurface,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
           title: Column(
             children: [
               Container(
@@ -772,8 +817,11 @@ class _BalanceScreenState extends State<BalanceScreen>
                   color: AppColors.successDark.withOpacity(0.15),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.check_rounded,
-                    color: AppColors.successDark, size: 32),
+                child: const Icon(
+                  Icons.check_rounded,
+                  color: AppColors.successDark,
+                  size: 32,
+                ),
               ),
               const SizedBox(height: 16),
               Text(
@@ -785,7 +833,9 @@ class _BalanceScreenState extends State<BalanceScreen>
                 ),
               ),
               Text(
-                branchPhone.isNotEmpty ? "$branchName • $branchPhone" : "Branch Details",
+                branchPhone.isNotEmpty
+                    ? "$branchName • $branchPhone"
+                    : "Branch Details",
                 style: GoogleFonts.poppins(
                   fontSize: 12,
                   color: AppColors.lightTextSecondary,
@@ -798,17 +848,26 @@ class _BalanceScreenState extends State<BalanceScreen>
               mainAxisSize: MainAxisSize.min,
               children: [
                 _buildReceiptRow("Shop", shopName),
-                _buildReceiptRow("Date", DateTime.now().toString().split('.')[0]),
+                _buildReceiptRow(
+                  "Date",
+                  DateTime.now().toString().split('.')[0],
+                ),
                 Divider(color: AppColors.lightCardBorder),
-                _buildReceiptRow("Old Balance",
-                    "LKR ${oldBalance % 1 == 0 ? oldBalance.toInt() : oldBalance} "),
-                _buildReceiptRow("Deducted",
-                    "- LKR ${reducedAmount % 1 == 0 ? reducedAmount.toInt() : reducedAmount}",
-                    isDeduction: true),
+                _buildReceiptRow(
+                  "Old Balance",
+                  "LKR ${oldBalance % 1 == 0 ? oldBalance.toInt() : oldBalance} ",
+                ),
+                _buildReceiptRow(
+                  "Deducted",
+                  "- LKR ${reducedAmount % 1 == 0 ? reducedAmount.toInt() : reducedAmount}",
+                  isDeduction: true,
+                ),
                 Divider(color: AppColors.lightCardBorder),
-                _buildReceiptRow("New Balance",
-                    "LKR ${newBalance % 1 == 0 ? newBalance.toInt() : newBalance}",
-                    isTotal: true),
+                _buildReceiptRow(
+                  "New Balance",
+                  "LKR ${newBalance % 1 == 0 ? newBalance.toInt() : newBalance}",
+                  isTotal: true,
+                ),
               ],
             ),
           ),
@@ -822,24 +881,31 @@ class _BalanceScreenState extends State<BalanceScreen>
             ),
             ElevatedButton.icon(
               icon: const Icon(Icons.print_rounded, size: 18),
-              label: Text("Print",
-                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+              label: Text(
+                "Print",
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+              ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.accentBlueDark,
                 foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               onPressed: () async {
-                final device =
-                    await printer.FlutterBluetoothPrinter.selectDevice(context);
+                final device = await printer
+                    .FlutterBluetoothPrinter.selectDevice(context);
                 if (device == null) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text("No printer selected",
-                          style: GoogleFonts.poppins()),
+                      content: Text(
+                        "No printer selected",
+                        style: GoogleFonts.poppins(),
+                      ),
                       backgroundColor: AppColors.warningDark,
                     ),
                   );
@@ -853,7 +919,8 @@ class _BalanceScreenState extends State<BalanceScreen>
                     return AlertDialog(
                       backgroundColor: AppColors.lightSurface,
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20)),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
                       title: Text(
                         "Receipt Preview",
                         style: GoogleFonts.poppins(
@@ -862,24 +929,30 @@ class _BalanceScreenState extends State<BalanceScreen>
                         ),
                       ),
                       content: printer.Receipt(
-                        builder: (context) => Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text("Pegas Flex\n$branchName\n$branchPhone"),
-                            const Divider(),
-                            Text("Shop: $shopName"),
-                            Text("Date: ${DateTime.now().toString().split('.')[0]}"),
-                            const SizedBox(height: 10),
-                            Text(
-                                "Old Balance: LKR ${oldBalance % 1 == 0 ? oldBalance.toInt() : oldBalance}"),
-                            const SizedBox(height: 8),
-                            Text(
-                                "Deducted: LKR ${reducedAmount % 1 == 0 ? reducedAmount.toInt() : reducedAmount}"),
-                            const SizedBox(height: 8),
-                            Text(
-                                "New Balance: LKR ${newBalance % 1 == 0 ? newBalance.toInt() : newBalance}"),
-                          ],
-                        ),
+                        builder:
+                            (context) => Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text("Pegas Flex\n$branchName\n$branchPhone"),
+                                const Divider(),
+                                Text("Shop: $shopName"),
+                                Text(
+                                  "Date: ${DateTime.now().toString().split('.')[0]}",
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  "Old Balance: LKR ${oldBalance % 1 == 0 ? oldBalance.toInt() : oldBalance}",
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  "Deducted: LKR ${reducedAmount % 1 == 0 ? reducedAmount.toInt() : reducedAmount}",
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  "New Balance: LKR ${newBalance % 1 == 0 ? newBalance.toInt() : newBalance}",
+                                ),
+                              ],
+                            ),
                         onInitialized: (controller) {
                           _receiptController = controller;
                         },
@@ -887,19 +960,25 @@ class _BalanceScreenState extends State<BalanceScreen>
                       actions: [
                         TextButton(
                           onPressed: () => Navigator.of(context).pop(),
-                          child: Text("Exit",
-                              style: GoogleFonts.poppins(
-                                  color: AppColors.lightTextSecondary)),
+                          child: Text(
+                            "Exit",
+                            style: GoogleFonts.poppins(
+                              color: AppColors.lightTextSecondary,
+                            ),
+                          ),
                         ),
                         ElevatedButton(
                           onPressed: () async {
                             if (_receiptController != null) {
-                              await _receiptController!
-                                  .print(address: device.address);
+                              await _receiptController!.print(
+                                address: device.address,
+                              );
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text("Receipt sent to printer",
-                                      style: GoogleFonts.poppins()),
+                                  content: Text(
+                                    "Receipt sent to printer",
+                                    style: GoogleFonts.poppins(),
+                                  ),
                                   backgroundColor: AppColors.successDark,
                                 ),
                               );
@@ -910,9 +989,12 @@ class _BalanceScreenState extends State<BalanceScreen>
                             backgroundColor: AppColors.accentTealDark,
                             foregroundColor: Colors.white,
                           ),
-                          child: Text("Print",
-                              style: GoogleFonts.poppins(
-                                  fontWeight: FontWeight.w600)),
+                          child: Text(
+                            "Print",
+                            style: GoogleFonts.poppins(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ],
                     );
@@ -928,8 +1010,12 @@ class _BalanceScreenState extends State<BalanceScreen>
     );
   }
 
-  Widget _buildReceiptRow(String label, String value,
-      {bool isDeduction = false, bool isTotal = false}) {
+  Widget _buildReceiptRow(
+    String label,
+    String value, {
+    bool isDeduction = false,
+    bool isTotal = false,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -947,9 +1033,10 @@ class _BalanceScreenState extends State<BalanceScreen>
             style: GoogleFonts.poppins(
               fontSize: isTotal ? 16 : 14,
               fontWeight: isTotal ? FontWeight.w700 : FontWeight.w500,
-              color: isDeduction
-                  ? AppColors.errorDark
-                  : isTotal
+              color:
+                  isDeduction
+                      ? AppColors.errorDark
+                      : isTotal
                       ? AppColors.successDark
                       : AppColors.lightTextPrimary,
             ),
@@ -981,22 +1068,193 @@ class _BalanceScreenState extends State<BalanceScreen>
     }
 
     return await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-      ),
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
     );
   }
 
   double _calculateDistance(
-      double lat1, double lon1, double lat2, double lon2) {
+    double lat1,
+    double lon1,
+    double lat2,
+    double lon2,
+  ) {
     return Geolocator.distanceBetween(lat1, lon1, lat2, lon2);
+  }
+
+  void _showCollectionTypeDialog() {
+    String? selectedCollectionType;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppColors.lightSurface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.accentTealDark.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.calendar_today_rounded,
+                      color: AppColors.accentTealDark,
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    "Collection Type",
+                    style: GoogleFonts.poppins(
+                      color: AppColors.lightTextPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.lightBackground,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: AppColors.lightCardBorder,
+                        ),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButtonFormField<String>(
+                          decoration: InputDecoration(
+                            labelText: 'Select Collection Frequency',
+                            labelStyle: GoogleFonts.poppins(
+                              color: AppColors.lightTextMuted,
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                          ),
+                          dropdownColor: AppColors.lightSurface,
+                          style: GoogleFonts.poppins(
+                            color: AppColors.lightTextPrimary,
+                          ),
+                          value: selectedCollectionType,
+                          items: [
+                            'Daily',
+                            '2 Days',
+                            '3 Days',
+                            'Weekly',
+                            '0 - No Collect',
+                          ]
+                              .map(
+                                (type) => DropdownMenuItem(
+                                  value: type == '0 - Hidden' ? '0' : type.toLowerCase(),
+                                  child: Text(type),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            setDialogState(() {
+                              selectedCollectionType = value;
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(
+                    'Cancel',
+                    style: GoogleFonts.poppins(
+                      color: AppColors.lightTextSecondary,
+                    ),
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.accentTealDark,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed:
+                      selectedCollectionType == null
+                          ? null
+                          : () async {
+                            try {
+                              final branchId = BranchContext().branchId;
+                              final shopRef = firestore
+                                  .collection('branches')
+                                  .doc(branchId)
+                                  .collection('routes')
+                                  .doc(widget.routeName)
+                                  .collection('shops')
+                                  .doc(widget.shopId);
+
+                              await shopRef.update(
+                                {'collectionType': selectedCollectionType},
+                              );
+
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Collection type updated to ${selectedCollectionType!.toUpperCase()}',
+                                    style: GoogleFonts.poppins(),
+                                  ),
+                                  backgroundColor: AppColors.success,
+                                ),
+                              );
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Error updating collection type: $e',
+                                    style: GoogleFonts.poppins(),
+                                  ),
+                                  backgroundColor: AppColors.errorDark,
+                                ),
+                              );
+                            }
+                          },
+                  child: Text(
+                    'Update',
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showFeedbackDialog() {
     String? selectedReason;
     String note = '';
-    bool isLocationVerified = false;
+    final bool isLowBalanceEligible = (balanceAmount ?? 0) < 2500;
+    bool isLocationVerified = isLowBalanceEligible; // Auto-verify if low balance eligible
     bool isCheckingLocation = false;
+    bool isLowBalanceSelected = false;
     double? currentDistance;
     String? locationError;
 
@@ -1008,7 +1266,8 @@ class _BalanceScreenState extends State<BalanceScreen>
             return AlertDialog(
               backgroundColor: AppColors.lightSurface,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24)),
+                borderRadius: BorderRadius.circular(24),
+              ),
               title: Row(
                 children: [
                   Container(
@@ -1017,8 +1276,11 @@ class _BalanceScreenState extends State<BalanceScreen>
                       color: AppColors.warningDark.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(Icons.warning_amber_rounded,
-                        color: AppColors.warningDark, size: 22),
+                    child: const Icon(
+                      Icons.warning_amber_rounded,
+                      color: AppColors.warningDark,
+                      size: 22,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Text(
@@ -1034,182 +1296,245 @@ class _BalanceScreenState extends State<BalanceScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Location Verification Section
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: isLocationVerified
-                            ? AppColors.success.withOpacity(0.1)
-                            : locationError != null
-                                ? AppColors.errorDark.withOpacity(0.1)
-                                : AppColors.accentTealDark.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: isLocationVerified
-                              ? AppColors.success.withOpacity(0.3)
-                              : locationError != null
-                                  ? AppColors.errorDark.withOpacity(0.3)
-                                  : AppColors.accentTealDark.withOpacity(0.3),
+                    // Show message if no location verification needed
+                    if (isLowBalanceEligible)
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: AppColors.success.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: AppColors.success.withOpacity(0.3),
+                          ),
                         ),
-                      ),
-                      child: Column(
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: isLocationVerified
-                                      ? AppColors.success.withOpacity(0.15)
-                                      : locationError != null
-                                          ? AppColors.errorDark
-                                              .withOpacity(0.15)
-                                          : AppColors.accentTealDark
-                                              .withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Icon(
-                                  isLocationVerified
-                                      ? Icons.check_circle_rounded
-                                      : locationError != null
-                                          ? Icons.error_rounded
-                                          : Icons.my_location_rounded,
-                                  color: isLocationVerified
-                                      ? AppColors.success
-                                      : locationError != null
-                                          ? AppColors.errorDark
-                                          : AppColors.accentTealDark,
-                                  size: 20,
-                                ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: AppColors.success.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(8),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Location Verification',
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: AppColors.lightTextPrimary,
-                                      ),
+                              child: const Icon(
+                                Icons.check_circle_rounded,
+                                color: AppColors.success,
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'No Location Verification Needed',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.lightTextPrimary,
                                     ),
-                                    Text(
-                                      isLocationVerified
-                                          ? 'You are within 10m of shop'
-                                          : locationError ??
-                                              'Verify you are at shop location',
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 11,
-                                        color: isLocationVerified
+                                  ),
+                                  Text(
+                                    'Shops with balance < 2500 can submit feedback without verification',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 11,
+                                      color: AppColors.success,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      // Location Verification Section (for balance >= 2500)
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color:
+                              isLocationVerified
+                                  ? AppColors.success.withOpacity(0.1)
+                                  : locationError != null
+                                  ? AppColors.errorDark.withOpacity(0.1)
+                                  : AppColors.accentTealDark.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color:
+                                isLocationVerified
+                                    ? AppColors.success.withOpacity(0.3)
+                                    : locationError != null
+                                    ? AppColors.errorDark.withOpacity(0.3)
+                                    : AppColors.accentTealDark.withOpacity(0.3),
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        isLocationVerified
+                                            ? AppColors.success.withOpacity(0.15)
+                                            : locationError != null
+                                            ? AppColors.errorDark.withOpacity(
+                                              0.15,
+                                            )
+                                            : AppColors.accentTealDark
+                                                .withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    isLocationVerified
+                                        ? Icons.check_circle_rounded
+                                        : locationError != null
+                                        ? Icons.error_rounded
+                                        : Icons.my_location_rounded,
+                                    color:
+                                        isLocationVerified
                                             ? AppColors.success
                                             : locationError != null
-                                                ? AppColors.errorDark
-                                                : AppColors.lightTextMuted,
-                                      ),
-                                    ),
-                                    if (currentDistance != null &&
-                                        !isLocationVerified)
-                                      Text(
-                                        'Distance: ${currentDistance!.toStringAsFixed(1)}m',
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 10,
-                                          color: AppColors.errorDark,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                              if (!isLocationVerified)
-                                SizedBox(
-                                  height: 36,
-                                  child: ElevatedButton(
-                                    onPressed: isCheckingLocation
-                                        ? null
-                                        : () async {
-                                            setDialogState(() {
-                                              isCheckingLocation = true;
-                                              locationError = null;
-                                            });
-
-                                            // Show loading for 2 seconds
-                                            await Future.delayed(
-                                                const Duration(seconds: 2));
-
-                                            final position =
-                                                await _getCurrentLocation();
-
-                                            if (position == null) {
-                                              setDialogState(() {
-                                                isCheckingLocation = false;
-                                                locationError =
-                                                    'Unable to get location';
-                                              });
-                                              return;
-                                            }
-
-                                            if (shopLatitude == null ||
-                                                shopLongitude == null) {
-                                              setDialogState(() {
-                                                isCheckingLocation = false;
-                                                locationError =
-                                                    'Shop location not available';
-                                              });
-                                              return;
-                                            }
-
-                                            final distance = _calculateDistance(
-                                              position.latitude,
-                                              position.longitude,
-                                              shopLatitude!,
-                                              shopLongitude!,
-                                            );
-
-                                            setDialogState(() {
-                                              isCheckingLocation = false;
-                                              currentDistance = distance;
-                                              if (distance <= 10) {
-                                                isLocationVerified = true;
-                                                locationError = null;
-                                              } else {
-                                                locationError =
-                                                    'Too long from shop';
-                                              }
-                                            });
-                                          },
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: AppColors.accentTealDark,
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 12),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                    ),
-                                    child: isCheckingLocation
-                                        ? const SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Colors.white,
-                                            ),
-                                          )
-                                        : Text(
-                                            'Verify',
-                                            style: GoogleFonts.poppins(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600,
-                                              color: Colors.white,
-                                            ),
-                                          ),
+                                            ? AppColors.errorDark
+                                            : AppColors.accentTealDark,
+                                    size: 20,
                                   ),
                                 ),
-                            ],
-                          ),
-                        ],
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Location Verification',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.lightTextPrimary,
+                                        ),
+                                      ),
+                                      Text(
+                                        isLocationVerified
+                                            ? 'You are within 70m of shop'
+                                            : locationError ??
+                                                'Verify you are at shop location',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 11,
+                                          color:
+                                              isLocationVerified
+                                                  ? AppColors.success
+                                                  : locationError != null
+                                                  ? AppColors.errorDark
+                                                  : AppColors.lightTextMuted,
+                                        ),
+                                      ),
+                                      if (currentDistance != null &&
+                                          !isLocationVerified)
+                                        Text(
+                                          'Distance: ${currentDistance!.toStringAsFixed(1)}m',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 10,
+                                            color: AppColors.errorDark,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                if (!isLocationVerified)
+                                  SizedBox(
+                                    height: 36,
+                                    child: ElevatedButton(
+                                      onPressed:
+                                          isCheckingLocation
+                                              ? null
+                                              : () async {
+                                                setDialogState(() {
+                                                  isCheckingLocation = true;
+                                                  locationError = null;
+                                                });
+
+                                                // Show loading for 2 seconds
+                                                await Future.delayed(
+                                                  const Duration(seconds: 2),
+                                                );
+
+                                                final position =
+                                                    await _getCurrentLocation();
+
+                                                if (position == null) {
+                                                  setDialogState(() {
+                                                    isCheckingLocation = false;
+                                                    locationError =
+                                                        'Unable to get location';
+                                                  });
+                                                  return;
+                                                }
+
+                                                if (shopLatitude == null ||
+                                                    shopLongitude == null) {
+                                                  setDialogState(() {
+                                                    isCheckingLocation = false;
+                                                    locationError =
+                                                        'Shop location not available';
+                                                  });
+                                                  return;
+                                                }
+
+                                                final distance =
+                                                    _calculateDistance(
+                                                      position.latitude,
+                                                      position.longitude,
+                                                      shopLatitude!,
+                                                      shopLongitude!,
+                                                    );
+
+                                                setDialogState(() {
+                                                  isCheckingLocation = false;
+                                                  currentDistance = distance;
+                                                  if (distance <= 70) {
+                                                    isLocationVerified = true;
+                                                    locationError = null;
+                                                  } else {
+                                                    locationError =
+                                                        'Too long from shop';
+                                                  }
+                                                });
+                                              },
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppColors.accentTealDark,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                      ),
+                                      child:
+                                          isCheckingLocation
+                                              ? const SizedBox(
+                                                width: 16,
+                                                height: 16,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: Colors.white,
+                                                ),
+                                              )
+                                              : Text(
+                                                'Verify',
+                                                style: GoogleFonts.poppins(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 16),
                     Opacity(
                       opacity: isLocationVerified ? 1.0 : 0.5,
@@ -1219,38 +1544,48 @@ class _BalanceScreenState extends State<BalanceScreen>
                           decoration: BoxDecoration(
                             color: AppColors.lightBackground,
                             borderRadius: BorderRadius.circular(16),
-                            border:
-                                Border.all(color: AppColors.lightCardBorder),
+                            border: Border.all(
+                              color: AppColors.lightCardBorder,
+                            ),
                           ),
                           child: DropdownButtonHideUnderline(
                             child: DropdownButtonFormField<String>(
                               decoration: InputDecoration(
                                 labelText: 'Reason',
                                 labelStyle: GoogleFonts.poppins(
-                                    color: AppColors.lightTextMuted),
+                                  color: AppColors.lightTextMuted,
+                                ),
                                 border: InputBorder.none,
-                                contentPadding:
-                                    const EdgeInsets.symmetric(horizontal: 16),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                ),
                               ),
                               dropdownColor: AppColors.lightSurface,
                               style: GoogleFonts.poppins(
-                                  color: AppColors.lightTextPrimary),
+                                color: AppColors.lightTextPrimary,
+                              ),
                               value: selectedReason,
-                              items: [
-                                'Shop Closed 🏪',
-                                'Owner Not Available 🙅‍♂️',
-                                'No business today 📉',
-                                'Owner refused to pay 💰',
-                                'Other ✏️'
-                              ]
-                                  .map((reason) => DropdownMenuItem(
-                                        value: reason,
-                                        child: Text(reason),
-                                      ))
-                                  .toList(),
+                              items:
+                                  [
+                                        'Shop Closed 🏪',
+                                        'Owner Not Available 🙅‍♂️',
+                                        'No business today 📉',
+                                        'Owner refused to pay 💰',
+                                        'Other ✏️',
+                                        if (isLowBalanceEligible)
+                                          'Low Balance',
+                                      ]
+                                      .map(
+                                        (reason) => DropdownMenuItem(
+                                          value: reason,
+                                          child: Text(reason),
+                                        ),
+                                      )
+                                      .toList(),
                               onChanged: (value) {
                                 setDialogState(() {
                                   selectedReason = value;
+                                  isLowBalanceSelected = value == 'Low Balance';
                                 });
                               },
                             ),
@@ -1258,6 +1593,61 @@ class _BalanceScreenState extends State<BalanceScreen>
                         ),
                       ),
                     ),
+                    if (isLowBalanceEligible) ...[
+                      const SizedBox(height: 12),
+                      Opacity(
+                        opacity: isLocationVerified ? 1.0 : 0.5,
+                        child: IgnorePointer(
+                          ignoring: !isLocationVerified,
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                setDialogState(() {
+                                  selectedReason = 'Low Balance';
+                                  isLowBalanceSelected = true;
+                                });
+                              },
+                              icon: Icon(
+                                Icons.sell_rounded,
+                                size: 18,
+                                color:
+                                    isLowBalanceSelected
+                                        ? Colors.white
+                                        : AppColors.warningDark,
+                              ),
+                              label: Text(
+                                'Low Balance',
+                                style: GoogleFonts.poppins(
+                                  fontWeight: FontWeight.w600,
+                                  color:
+                                      isLowBalanceSelected
+                                          ? Colors.white
+                                          : AppColors.warningDark,
+                                ),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                backgroundColor:
+                                    isLowBalanceSelected
+                                        ? AppColors.warningDark
+                                        : Colors.transparent,
+                                side: BorderSide(
+                                  color: AppColors.warningDark.withOpacity(0.6),
+                                  width: 1.4,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                  horizontal: 14,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     Opacity(
                       opacity: isLocationVerified ? 1.0 : 0.5,
@@ -1267,16 +1657,19 @@ class _BalanceScreenState extends State<BalanceScreen>
                           decoration: BoxDecoration(
                             color: AppColors.lightBackground,
                             borderRadius: BorderRadius.circular(16),
-                            border:
-                                Border.all(color: AppColors.lightCardBorder),
+                            border: Border.all(
+                              color: AppColors.lightCardBorder,
+                            ),
                           ),
                           child: TextField(
                             style: GoogleFonts.poppins(
-                                color: AppColors.lightTextPrimary),
+                              color: AppColors.lightTextPrimary,
+                            ),
                             decoration: InputDecoration(
                               labelText: 'Note (optional)',
                               labelStyle: GoogleFonts.poppins(
-                                  color: AppColors.lightTextMuted),
+                                color: AppColors.lightTextMuted,
+                              ),
                               border: InputBorder.none,
                               contentPadding: const EdgeInsets.all(16),
                             ),
@@ -1293,16 +1686,20 @@ class _BalanceScreenState extends State<BalanceScreen>
                         color: AppColors.warningDark.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                            color: AppColors.warningDark.withOpacity(0.2)),
+                          color: AppColors.warningDark.withOpacity(0.2),
+                        ),
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.info_outline,
-                              color: AppColors.warningDark, size: 20),
+                          const Icon(
+                            Icons.info_outline,
+                            color: AppColors.warningDark,
+                            size: 20,
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              "You must be within 10m of shop to submit feedback.",
+                              "You must be within70m of shop to submit feedback.",
                               style: GoogleFonts.poppins(
                                 fontSize: 12,
                                 color: AppColors.warningDark,
@@ -1317,85 +1714,129 @@ class _BalanceScreenState extends State<BalanceScreen>
               ),
               actions: [
                 TextButton(
-                  child: Text('Cancel',
-                      style: GoogleFonts.poppins(
-                          color: AppColors.lightTextSecondary)),
+                  child: Text(
+                    'Cancel',
+                    style: GoogleFonts.poppins(
+                      color: AppColors.lightTextSecondary,
+                    ),
+                  ),
                   onPressed: () => Navigator.pop(context),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: isLocationVerified
-                        ? AppColors.warningDark
-                        : AppColors.lightTextMuted,
+                    backgroundColor:
+                        isLocationVerified
+                            ? AppColors.warningDark
+                            : AppColors.lightTextMuted,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 12),
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
-                  onPressed: isLocationVerified
-                      ? () async {
-                          if (selectedReason == null ||
-                              selectedReason!.isEmpty) {
+                  onPressed:
+                      isLocationVerified
+                          ? () async {
+                            if (selectedReason == null ||
+                                selectedReason!.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Please select a reason',
+                                    style: GoogleFonts.poppins(),
+                                  ),
+                                  backgroundColor: AppColors.errorDark,
+                                ),
+                              );
+                              return;
+                            }
+
+                            try {
+                              final branchId = BranchContext().branchId;
+                              final shopRef = firestore
+                                  .collection('branches')
+                                  .doc(branchId)
+                                  .collection('routes')
+                                  .doc(widget.routeName)
+                                  .collection('shops')
+                                  .doc(widget.shopId);
+
+                              // Save feedback to Firestore
+                              await firestore
+                                  .collection('branches')
+                                  .doc(branchId)
+                                  .collection('feedback')
+                                  .add({
+                                    'routeName': widget.routeName,
+                                    'shopName': widget.shopName,
+                                    'shopId': widget.shopId,
+                                    'reason': selectedReason,
+                                    'note': note,
+                                    'timestamp': Timestamp.now(),
+                                    'status': 'open',
+                                  });
+
+                              final feedbackExpiry = DateTime.now().add(
+                                const Duration(hours: 12),
+                              );
+
+                              await shopRef.update({
+                                'status': 'Paid',
+                                'paidAt': FieldValue.serverTimestamp(),
+                                'paidAmount': 0,
+                                'feedbacked': true,
+                                'feedbackedTag': 'feedbacked',
+                                'feedbackReason': selectedReason,
+                                'feedbackedAt': FieldValue.serverTimestamp(),
+                                'feedbackedUntil': Timestamp.fromDate(
+                                  feedbackExpiry,
+                                ),
+                              });
+
+                              widget.onBalanceAdjusted(widget.shopName, 0);
+
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Feedback submitted. Shop moved to Paid tab for 12 hours.',
+                                    style: GoogleFonts.poppins(),
+                                  ),
+                                  backgroundColor: AppColors.success,
+                                ),
+                              );
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Error submitting feedback: $e',
+                                    style: GoogleFonts.poppins(),
+                                  ),
+                                  backgroundColor: AppColors.errorDark,
+                                ),
+                              );
+                            }
+                          }
+                          : () {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Text('Please select a reason',
-                                    style: GoogleFonts.poppins()),
+                                content: Text(
+                                  isLowBalanceEligible
+                                      ? 'Please select a reason to submit feedback'
+                                      : 'Please verify your location first (must be within 70m of shop)',
+                                  style: GoogleFonts.poppins(),
+                                ),
                                 backgroundColor: AppColors.errorDark,
                               ),
                             );
-                            return;
-                          }
-
-                          try {
-                            final branchId = BranchContext().branchId;
-
-                            // Save feedback to Firestore
-                            await firestore
-                                .collection('branches')
-                                .doc(branchId)
-                                .collection('feedback')
-                                .add({
-                              'routeName': widget.routeName,
-                              'shopName': widget.shopName,
-                              'shopId': widget.shopId,
-                              'reason': selectedReason,
-                              'note': note,
-                              'timestamp': Timestamp.now(),
-                              'status': 'open',
-                            });
-
-                            Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Feedback submitted successfully',
-                                    style: GoogleFonts.poppins()),
-                                backgroundColor: AppColors.success,
-                              ),
-                            );
-                          } catch (e) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content:
-                                    Text('Error submitting feedback: $e',
-                                        style: GoogleFonts.poppins()),
-                                backgroundColor: AppColors.errorDark,
-                              ),
-                            );
-                          }
-                        }
-                      : () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                  'Please verify your location first (must be within 10m of shop)',
-                                  style: GoogleFonts.poppins()),
-                              backgroundColor: AppColors.errorDark,
-                            ),
-                          );
-                        },
-                  child: Text('Submit',
-                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                          },
+                  child: Text(
+                    'Submit',
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                  ),
                 ),
               ],
             );
@@ -1455,8 +1896,10 @@ class _BalanceScreenState extends State<BalanceScreen>
         children: [
           IconButton(
             onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back_ios_rounded,
-                color: AppColors.lightTextPrimary),
+            icon: const Icon(
+              Icons.arrow_back_ios_rounded,
+              color: AppColors.lightTextPrimary,
+            ),
             style: IconButton.styleFrom(
               backgroundColor: AppColors.lightCardBorder,
               padding: const EdgeInsets.all(12),
@@ -1487,11 +1930,22 @@ class _BalanceScreenState extends State<BalanceScreen>
               ],
             ),
           ),
+          // IconButton(
+          //   onPressed: _changeShopOrder,
+          //   icon: const Icon(Icons.sort, color: AppColors.accentTealDark),
+          //   tooltip: "Change Shop Order",
+          //   style: IconButton.styleFrom(
+          //     backgroundColor: AppColors.accentTealDark.withOpacity(0.12),
+          //     padding: const EdgeInsets.all(12),
+          //   ),
+          // ),
           IconButton(
-            onPressed: _changeShopOrder,
-            icon: const Icon(Icons.sort,
-                color: AppColors.accentTealDark),
-            tooltip: "Change Shop Order",
+            onPressed: _showCollectionTypeDialog,
+            icon: const Icon(
+              Icons.calendar_today_rounded,
+              color: AppColors.accentTealDark,
+            ),
+            tooltip: "Update Collection Type",
             style: IconButton.styleFrom(
               backgroundColor: AppColors.accentTealDark.withOpacity(0.12),
               padding: const EdgeInsets.all(12),
@@ -1500,8 +1954,10 @@ class _BalanceScreenState extends State<BalanceScreen>
           const SizedBox(width: 8),
           IconButton(
             onPressed: _fetchBalance,
-            icon: const Icon(Icons.refresh_rounded,
-                color: AppColors.accentTealDark),
+            icon: const Icon(
+              Icons.refresh_rounded,
+              color: AppColors.accentTealDark,
+            ),
             style: IconButton.styleFrom(
               backgroundColor: AppColors.accentTealDark.withOpacity(0.12),
               padding: const EdgeInsets.all(12),
@@ -1535,8 +1991,11 @@ class _BalanceScreenState extends State<BalanceScreen>
               color: AppColors.errorDark.withOpacity(0.12),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.account_balance_wallet_rounded,
-                color: AppColors.errorDark, size: 32),
+            child: const Icon(
+              Icons.account_balance_wallet_rounded,
+              color: AppColors.errorDark,
+              size: 32,
+            ),
           ),
           const SizedBox(height: 20),
           Text(
@@ -1549,35 +2008,37 @@ class _BalanceScreenState extends State<BalanceScreen>
           ),
           const SizedBox(height: 8),
           balanceAmount == null
-              ? const CircularProgressIndicator(
-                  color: AppColors.accentTealDark, strokeWidth: 2)
+              ? LoadingAnimationWidget.staggeredDotsWave(
+                color: AppColors.errorDark,
+                size: 46,
+              )
               : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      balanceAmount! % 1 == 0
-                          ? balanceAmount!.toInt().toString()
-                          : balanceAmount.toString(),
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    balanceAmount! % 1 == 0
+                        ? balanceAmount!.toInt().toString()
+                        : balanceAmount.toString(),
+                    style: GoogleFonts.poppins(
+                      fontSize: 42,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.errorDark,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      ' LKR',
                       style: GoogleFonts.poppins(
-                        fontSize: 42,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.errorDark,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.lightTextSecondary,
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Text(
-                        ' LKR',
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.lightTextSecondary,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
+              ),
           const SizedBox(height: 8),
           Text(
             'Click adjust button to reduce collected amount',
@@ -1637,7 +2098,11 @@ class _BalanceScreenState extends State<BalanceScreen>
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.shopping_cart_rounded, color: Colors.white, size: 20),
+                  const Icon(
+                    Icons.shopping_cart_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
                   const SizedBox(width: 10),
                   Text(
                     'ORDER PRODUCTS',
@@ -1754,8 +2219,11 @@ class _BalanceScreenState extends State<BalanceScreen>
             child: Center(
               child: Column(
                 children: [
-                  Icon(Icons.receipt_long_rounded,
-                      color: AppColors.lightTextMuted, size: 48),
+                  Icon(
+                    Icons.receipt_long_rounded,
+                    color: AppColors.lightTextMuted,
+                    size: 48,
+                  ),
                   const SizedBox(height: 12),
                   Text(
                     'No transactions yet',
@@ -1801,8 +2269,11 @@ class _BalanceScreenState extends State<BalanceScreen>
                         color: AppColors.successDark.withOpacity(0.12),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: const Icon(Icons.payments_rounded,
-                          color: AppColors.successDark, size: 22),
+                      child: const Icon(
+                        Icons.payments_rounded,
+                        color: AppColors.successDark,
+                        size: 22,
+                      ),
                     ),
                     const SizedBox(width: 14),
                     Expanded(
@@ -1820,9 +2291,10 @@ class _BalanceScreenState extends State<BalanceScreen>
                           const SizedBox(height: 4),
                           Text(
                             tx['time'] != null
-                                ? (tx['time'] as DateTime)
-                                    .toString()
-                                    .substring(0, 16)
+                                ? (tx['time'] as DateTime).toString().substring(
+                                  0,
+                                  16,
+                                )
                                 : 'Unknown',
                             style: GoogleFonts.poppins(
                               fontSize: 12,
