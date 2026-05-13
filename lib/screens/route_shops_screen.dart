@@ -239,8 +239,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
             _searchController.text.toLowerCase(),
           );
           final hasValidAmount = showUnpaid || shop['amount'] != null;
-          return
-              !hideFromScreen &&
+          return !hideFromScreen &&
               matchStatus &&
               matchCollectionType &&
               matchSearch &&
@@ -1238,6 +1237,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
     final status = shop['status'];
     final paidAt = shop['paidAt'] as DateTime?;
     final isFeedbacked = (shop['feedbacked'] as bool?) ?? false;
+    final collectionType = shop['collectionType']?.toString() ?? 'daily';
     final phone = shop['phone'] ?? 'N/A';
     final address = shop['address'] ?? 'Unknown';
     final amount = shop['amount'] ?? 0;
@@ -1389,112 +1389,148 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
                             ),
                             const SizedBox(height: 8),
                             // Balance and Status Tags Under Phone
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.start,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(
-                                      0xFF4A3F0F,
-                                    ).withOpacity(0.8),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        'Rs.${amount.toStringAsFixed(0)}',
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w700,
-                                          color: const Color(0xFFD4AF37),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        isPaid
-                                            ? const Color(
-                                              0xFF1A4D3E,
-                                            ).withOpacity(0.8)
-                                            : const Color(
-                                              0xFF4A2E2E,
-                                            ).withOpacity(0.8),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    isPaid ? '✓ Paid' : 'Unpaid',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w600,
-                                      color:
-                                          isPaid
-                                              ? const Color(0xFF20D9A3)
-                                              : const Color(0xFFD84040),
-                                    ),
-                                  ),
-                                ),
-                                if (isPaid && isFeedbacked) ...[
-                                  const SizedBox(width: 8),
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.start,
+                                children: [
                                   Container(
                                     padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
+                                      horizontal: 12,
+                                      vertical: 6,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: const Color(
-                                        0xFF4A2455,
-                                      ).withOpacity(0.85),
-                                      borderRadius: BorderRadius.circular(6),
+                                      color: const Color(0xFFE53935),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: const Color(0xFFFFCDD2),
+                                        width: 1.5,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: const Color(
+                                            0xFFE53935,
+                                          ).withOpacity(0.4),
+                                          blurRadius: 6,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
                                     ),
                                     child: Text(
-                                      'feedbacked',
+                                      collectionType.toUpperCase(),
                                       style: GoogleFonts.poppins(
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.w600,
-                                        color: const Color(0xFFF0B3FF),
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                        letterSpacing: 0.5,
                                       ),
                                     ),
                                   ),
-                                ],
-                                if (!isPaid && distanceMeters != null) ...[
                                   const SizedBox(width: 8),
                                   Container(
                                     padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
+                                      horizontal: 10,
                                       vertical: 4,
                                     ),
                                     decoration: BoxDecoration(
                                       color: const Color(
-                                        0xFF1A3A5C,
+                                        0xFF4A3F0F,
                                       ).withOpacity(0.8),
                                       borderRadius: BorderRadius.circular(6),
                                     ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          'Rs.${amount.toStringAsFixed(0)}',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700,
+                                            color: const Color(0xFFD4AF37),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color:
+                                          isPaid
+                                              ? const Color(
+                                                0xFF1A4D3E,
+                                              ).withOpacity(0.8)
+                                              : const Color(
+                                                0xFF4A2E2E,
+                                              ).withOpacity(0.8),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
                                     child: Text(
-                                      distanceMeters >= 1000
-                                          ? '${(distanceMeters / 1000).toStringAsFixed(1)} km'
-                                          : '${distanceMeters.toStringAsFixed(0)} m',
+                                      isPaid ? '✓ Paid' : 'Unpaid',
                                       style: GoogleFonts.poppins(
                                         fontSize: 9,
                                         fontWeight: FontWeight.w600,
-                                        color: const Color(0xFF7EC8FF),
+                                        color:
+                                            isPaid
+                                                ? const Color(0xFF20D9A3)
+                                                : const Color(0xFFD84040),
                                       ),
                                     ),
                                   ),
+                                  if (isPaid && isFeedbacked) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(
+                                          0xFF4A2455,
+                                        ).withOpacity(0.85),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        'feedbacked',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w600,
+                                          color: const Color(0xFFF0B3FF),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                  if (!isPaid && distanceMeters != null) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(
+                                          0xFF1A3A5C,
+                                        ).withOpacity(0.8),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        distanceMeters >= 1000
+                                            ? '${(distanceMeters / 1000).toStringAsFixed(1)} km'
+                                            : '${distanceMeters.toStringAsFixed(0)} m',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w600,
+                                          color: const Color(0xFF7EC8FF),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ],
-                              ],
+                              ),
                             ),
                           ],
                         ),

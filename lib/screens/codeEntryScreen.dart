@@ -361,9 +361,9 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
                                 ),
                               ),
                               child: Image.asset(
-                                'assets/images/cash.png',
-                                width: 90,
-                                height: 90,
+                                'assets/images/cash coll logo 1.png',
+                                width: 100,
+                                height: 100,
                                 fit: BoxFit.contain,
                               ),
                             ),
