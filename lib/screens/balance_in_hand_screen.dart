@@ -17,17 +17,23 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
   final firestore = FirebaseFirestore.instance;
 
   bool isBalanceLoading = false;
+  bool isSalesRepBalanceLoading = false;
   bool isTodayCollectionLoading = false;
   bool isWeekCollectionLoading = false;
   bool isInitializing = true;
 
   bool hasBalanceValue = false;
+  bool hasSalesRepBalanceValue = false;
   bool hasTodayCollectionValue = false;
   bool hasWeekCollectionValue = false;
 
   double totalBalance = 0.0;
+  double salesRepTransferReceived = 0.0;
+  double salesRepBalance = 0.0;
   double todayCollection = 0.0;
   double weekCollection = 0.0;
+
+  double get _displayBalanceInHand => totalBalance + salesRepTransferReceived;
 
   DateTime selectedTodayCollectionDate = DateTime.now();
 
@@ -87,6 +93,7 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
 
     await Future.wait([
       _fetchTotalPaidAcrossAllRoutes(branchId, shopDocs),
+      _fetchSalesRepBalance(branchId),
       _fetchTotalPaidToday(
         branchId,
         shopDocs,
@@ -122,6 +129,14 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
           if (statsData.containsKey('cashcollector_balance')) {
             totalBalance = _toDouble(statsData['cashcollector_balance']);
             hasBalanceValue = true;
+          }
+          if (statsData.containsKey('cashcollector_salesrep_received')) {
+            salesRepTransferReceived =
+                _toDouble(statsData['cashcollector_salesrep_received']);
+          }
+          if (statsData.containsKey('cashadder_balanceinhand')) {
+            salesRepBalance = _toDouble(statsData['cashadder_balanceinhand']);
+            hasSalesRepBalanceValue = true;
           }
           if (statsData.containsKey('cashcollector_week_paid')) {
             weekCollection = _toDouble(statsData['cashcollector_week_paid']);
@@ -271,6 +286,17 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
         totalPaid += _toDouble(shopData['totalPaid']);
       }
 
+      final statsDoc = await firestore
+          .collection('branches')
+          .doc(branchId)
+          .collection('admin')
+          .doc('stats')
+          .get();
+
+      final salesRepReceived = statsDoc.exists
+          ? _toDouble(statsDoc.data()?['cashcollector_salesrep_received'])
+          : 0.0;
+
       // Save calculated balance to Firestore
       await firestore
           .collection('branches')
@@ -288,6 +314,7 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
       if (mounted) {
         setState(() {
           totalBalance = totalPaid;
+            salesRepTransferReceived = salesRepReceived;
           hasBalanceValue = true;
         });
       }
@@ -333,7 +360,6 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
         includeType: (type) => type == null || type == 'paid',
       );
 
-      // Persist only real today's collection, avoid overwriting cache when viewing older dates.
       if (isToday) {
         await firestore
             .collection('branches')
@@ -355,6 +381,7 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
           hasTodayCollectionValue = true;
         });
       }
+
       if (isToday) {
         print('✅ Saved todaytotalPaid to Firestore: Rs $totalPaidToday');
       } else {
@@ -367,6 +394,166 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
         setState(() => isTodayCollectionLoading = false);
       }
     }
+  }
+
+  Future<void> _fetchSalesRepBalance(String branchId) async {
+    if (mounted) {
+      setState(() => isSalesRepBalanceLoading = true);
+    }
+    try {
+      final statsDoc = await firestore
+          .collection('branches')
+          .doc(branchId)
+          .collection('admin')
+          .doc('stats')
+          .get();
+
+      final currentBalance = statsDoc.exists
+          ? _toDouble(statsDoc.data()?['cashadder_balanceinhand'])
+          : 0.0;
+
+      if (mounted) {
+        setState(() {
+          salesRepBalance = currentBalance;
+          hasSalesRepBalanceValue = true;
+        });
+      }
+    } catch (e) {
+      print('Error in _fetchSalesRepBalance: $e');
+    } finally {
+      if (mounted) {
+        setState(() => isSalesRepBalanceLoading = false);
+      }
+    }
+  }
+
+  Future<void> _showSalesRepTransferDialog() async {
+    final branchId = BranchContext().branchId;
+    if (branchId == null) return;
+
+    final amountController = TextEditingController();
+    final noteController = TextEditingController();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        bool isSubmitting = false;
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> submitTransfer() async {
+              final rawAmount = amountController.text.trim().replaceAll(',', '');
+              final enteredAmount = double.tryParse(rawAmount) ?? 0.0;
+              final transferAmount = enteredAmount.abs();
+
+              if (transferAmount <= 0) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Enter a valid amount.')),
+                );
+                return;
+              }
+
+              setDialogState(() => isSubmitting = true);
+
+              try {
+                final statsRef = firestore
+                    .collection('branches')
+                    .doc(branchId)
+                    .collection('admin')
+                    .doc('stats');
+
+                final transferRef = statsRef.collection('sales_rep_transfers').doc();
+
+                final batch = firestore.batch();
+                batch.update(statsRef, {
+                  'cumulative_deducted': FieldValue.increment(transferAmount),
+                  'cashcollector_salesrep_received':
+                      FieldValue.increment(transferAmount),
+                  'cashadder_balanceinhand': FieldValue.increment(-transferAmount),
+                  'lastUpdated': Timestamp.now(),
+                });
+                batch.set(transferRef, {
+                  'amount': transferAmount,
+                  'note': noteController.text.trim(),
+                  'createdAt': Timestamp.now(),
+                  'type': 'sales_rep_balance_transfer',
+                });
+
+                await batch.commit();
+
+                if (mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
+
+                await _refreshAllBalances(loadCachedFirst: false);
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Transfer failed: $e')),
+                  );
+                }
+              } finally {
+                if (mounted) {
+                  setState(() {});
+                }
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Deduct Sales Rep Balance'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: amountController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Amount',
+                        hintText: 'Enter amount to transfer',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: noteController,
+                      decoration: const InputDecoration(
+                        labelText: 'Note (optional)',
+                        hintText: 'Reason for deduction',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Current Sales Rep Balance: Rs ${salesRepBalance.toStringAsFixed(2)}',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.lightTextSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting ? null : () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isSubmitting ? null : submitTransfer,
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Deduct'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   /// Fetch total paid this week in this branch
@@ -402,8 +589,7 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
         shopDocs: shopDocs,
         start: startOfWeek,
         end: endOfWeek,
-        includeType:
-            (type) => type == null || type != 'Credit' || type == 'paid',
+        includeType: (type) => type == null || type == 'paid',
       );
 
       // Save week's collection to Firestore
@@ -465,6 +651,8 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
                       children: [
                         _buildMainBalanceCard(),
                         const SizedBox(height: 24),
+                          _buildSalesRepBalanceCard(),
+                          const SizedBox(height: 24),
                         _buildStatsRow(),
                         const SizedBox(height: 24),
                         _buildRecentActivityCard(),
@@ -592,8 +780,8 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
                   const SizedBox(width: 6),
                   Text(
                     totalBalance % 1 == 0
-                        ? totalBalance.toInt().toString()
-                        : totalBalance.toString(),
+                        ? _displayBalanceInHand.toInt().toString()
+                        : _displayBalanceInHand.toString(),
                     style: GoogleFonts.poppins(
                       fontSize: 44,
                       fontWeight: FontWeight.w700,
@@ -608,6 +796,95 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
             style: GoogleFonts.poppins(
               fontSize: 13,
               color: Colors.white.withOpacity(0.7),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSalesRepBalanceCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.lightSurface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.lightCardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  'Sales Rep Balance In Hand',
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.lightTextPrimary,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.warningDark.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.point_of_sale_rounded,
+                  size: 18,
+                  color: AppColors.warningDark,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          isSalesRepBalanceLoading && !hasSalesRepBalanceValue
+              ? SpinKitThreeBounce(color: AppColors.warningDark, size: 18)
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Rs. ${salesRepBalance.toStringAsFixed(2)}',
+                      style: GoogleFonts.poppins(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                        color: salesRepBalance < 0
+                            ? AppColors.errorDark
+                            : AppColors.warningDark,
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: _showSalesRepTransferDialog,
+                      icon: const Icon(Icons.remove_circle_outline, size: 18),
+                      label: const Text('Deduct'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.warningDark,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+          const SizedBox(height: 8),
+          Text(
+            'Transfer this amount to cash collector balance in hand',
+            style: GoogleFonts.poppins(
+              fontSize: 12,
+              color: AppColors.lightTextSecondary,
             ),
           ),
         ],
