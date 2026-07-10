@@ -4,6 +4,7 @@ import 'package:flutter_spinkit/flutter_spinkit.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/app_theme.dart';
 import '../services/branch_context.dart';
+import 'sales_rep_transfer_history_screen.dart';
 
 class BalanceInHandScreen extends StatefulWidget {
   const BalanceInHandScreen({super.key});
@@ -463,6 +464,9 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
                     .doc('stats');
 
                 final transferRef = statsRef.collection('sales_rep_transfers').doc();
+                final previousSalesRepBalance = salesRepBalance;
+                final newSalesRepBalance =
+                    (previousSalesRepBalance - transferAmount).clamp(0.0, double.infinity);
 
                 final batch = firestore.batch();
                 batch.update(statsRef, {
@@ -477,6 +481,9 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
                   'note': noteController.text.trim(),
                   'createdAt': Timestamp.now(),
                   'type': 'sales_rep_balance_transfer',
+                  'previousBalance': previousSalesRepBalance,
+                  'newBalance': newSalesRepBalance,
+                  'branchId': branchId,
                 });
 
                 await batch.commit();
@@ -879,6 +886,22 @@ class _BalanceInHandScreenState extends State<BalanceInHandScreen>
                     ),
                   ],
                 ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: ElevatedButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const SalesRepTransferHistoryScreen(),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.history, size: 18, color: AppColors.lightTextSecondary),
+              label: const Text('See History', style: TextStyle(color: AppColors.lightTextSecondary)),
+            ),
+          ),
           const SizedBox(height: 8),
           Text(
             'Transfer this amount to cash collector balance in hand',
