@@ -9,6 +9,7 @@ import 'package:pegas_cashcollector/screens/termsandconditions.dart';
 import 'package:pegas_cashcollector/screens/achievements_screen.dart';
 import 'package:pegas_cashcollector/screens/route_shops_screen.dart';
 import 'package:pegas_cashcollector/screens/daily_payment_shops_screen.dart';
+import 'package:pegas_cashcollector/screens/salary_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -571,6 +572,23 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                             context,
                             MaterialPageRoute(
                                 builder: (_) => const AchievementsScreen()),
+                          );
+                        },
+                        fontSize: menuItemFontSize,
+                        iconSize: menuIconSize,
+                        paddingH: menuItemPaddingH,
+                        paddingV: menuItemPaddingV,
+                      ),
+                      SizedBox(height: isSmallScreen ? 4 : 6),
+                      _buildDrawerMenuItem(
+                        icon: Icons.payments_rounded,
+                        title: 'My Salary',
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const SalaryScreen()),
                           );
                         },
                         fontSize: menuItemFontSize,
