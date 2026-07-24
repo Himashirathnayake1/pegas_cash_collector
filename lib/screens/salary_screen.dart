@@ -63,8 +63,38 @@ class _SalaryScreenState extends State<SalaryScreen>
     final dayStart = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day, 0, 0, 0);
     final dayEnd = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day, 23, 59, 59, 999);
 
+    // 1. Check if separate daily visits document exists in branches/{branchId}/cashcollector_visits/{date}
+    final visitsDocRef = fs
+        .collection('branches')
+        .doc(branchId)
+        .collection('cashcollector_visits')
+        .doc(_dateKey);
+
+    int finalVisited = 0;
+    int paidCount = 0;
+    int feedbackCount = 0;
+    bool hasValidSavedVisits = false;
+
+    try {
+      final visitsSnap = await visitsDocRef.get();
+      if (visitsSnap.exists) {
+        final vData = visitsSnap.data()!;
+        finalVisited = (vData['totalVisited'] ?? vData['shopsVisitedToday'] ?? 0) as int;
+        final pList = vData['paidShopIds'] as List?;
+        final fList = vData['feedbackShopIds'] as List?;
+
+        paidCount = (vData['paidShopCount'] ?? pList?.length ?? 0) as int;
+        feedbackCount = (vData['feedbackShopCount'] ?? fList?.length ?? 0) as int;
+
+        if (finalVisited > 0 && (paidCount > 0 || feedbackCount > 0)) {
+          hasValidSavedVisits = true;
+        }
+      }
+    } catch (_) {}
+
     double summaryTodayPaid = 0.0;
     int targetShops = 0;
+    double defaultCommission = 0.0;
 
     try {
       final summaryDoc = await fs.collection('branches').doc(branchId).collection('admin').doc('summary').get();
@@ -76,14 +106,15 @@ class _SalaryScreenState extends State<SalaryScreen>
     try {
       final statsDoc = await fs.collection('branches').doc(branchId).collection('admin').doc('stats').get();
       if (statsDoc.exists) {
-        targetShops = (statsDoc.data()?['cashcollector_target'] ?? 0) as int;
+        final statsData = statsDoc.data() ?? {};
+        targetShops = (statsData['cashcollector_target'] ?? 0) as int;
+        defaultCommission = _asDouble(statsData['default_commission_percent'] ?? statsData['commission_percent']);
       }
     } catch (_) {}
 
     double txSum = 0.0;
-    double shopPaidSum = 0.0;
-    int paidShopCount = 0;
     final visitedShopIds = <String>{};
+    final paidShopIdsSet = <String>{};
 
     try {
       final routesSnap = await fs.collection('branches').doc(branchId).collection('routes').get();
@@ -92,31 +123,31 @@ class _SalaryScreenState extends State<SalaryScreen>
         final shopsSnap = await routeDoc.reference.collection('shops').get();
 
         for (final shopDoc in shopsSnap.docs) {
-          final data = shopDoc.data();
           final shopId = shopDoc.id;
-          final status = data['status'] as String? ?? '';
-          final totalPaid = _asDouble(data['totalPaid']);
-
-          if (status == 'Paid' || totalPaid > 0) {
-            shopPaidSum += totalPaid;
-            paidShopCount++;
-            if (_isToday) visitedShopIds.add(shopId);
-          }
 
           try {
             final txSnap = await shopDoc.reference.collection('transactions').get();
             for (final txDoc in txSnap.docs) {
               final txData = txDoc.data();
               final type = txData['type']?.toString();
-              final tsRaw = txData['timestamp'] ?? txData['resetAt'];
+              final tsRaw = txData['timestamp'] ??
+                  txData['resetAt'] ??
+                  txData['submittedAt'] ??
+                  txData['createdAt'] ??
+                  txData['date'];
               DateTime? txTime;
-              if (tsRaw is Timestamp) txTime = tsRaw.toDate();
+              if (tsRaw is Timestamp) {
+                txTime = tsRaw.toDate();
+              } else if (tsRaw is String) {
+                txTime = DateTime.tryParse(tsRaw);
+              }
 
               if (txTime != null &&
                   txTime.isAfter(dayStart.subtract(const Duration(seconds: 1))) &&
                   txTime.isBefore(dayEnd.add(const Duration(seconds: 1)))) {
                 if (type == null || type == 'paid' || type == 'partialPaid' || type == 'Cash') {
                   txSum += _asDouble(txData['amount']);
+                  paidShopIdsSet.add(shopId);
                   visitedShopIds.add(shopId);
                 }
               }
@@ -126,18 +157,50 @@ class _SalaryScreenState extends State<SalaryScreen>
       }
     } catch (_) {}
 
-    double finalCollection = txSum;
-    if (finalCollection == 0 && _isToday) {
-      if (summaryTodayPaid > 0) {
-        finalCollection = summaryTodayPaid;
-      } else if (shopPaidSum > 0) {
-        finalCollection = shopPaidSum;
+    final feedbackShopIdsSet = <String>{};
+    try {
+      final feedbackSnap = await fs
+          .collection('branches')
+          .doc(branchId)
+          .collection('feedback')
+          .get();
+
+      for (final fbDoc in feedbackSnap.docs) {
+        final fbData = fbDoc.data();
+        final tsRaw = fbData['createdAt'] ?? fbData['timestamp'] ?? fbData['time'];
+        DateTime? fbTime;
+        if (tsRaw is Timestamp) {
+          fbTime = tsRaw.toDate();
+        } else if (tsRaw is DateTime) {
+          fbTime = tsRaw;
+        } else if (tsRaw is String) {
+          fbTime = DateTime.tryParse(tsRaw);
+        }
+
+        if (fbTime != null &&
+            fbTime.isAfter(dayStart.subtract(const Duration(seconds: 1))) &&
+            fbTime.isBefore(dayEnd.add(const Duration(seconds: 1)))) {
+          final shopId =
+              (fbData['shopId'] ?? fbData['shopName'] ?? fbData['name'] ?? fbDoc.id)
+                  .toString()
+                  .trim();
+          if (shopId.isNotEmpty) {
+            feedbackShopIdsSet.add(shopId);
+            visitedShopIds.add(shopId);
+          }
+        }
       }
+    } catch (_) {}
+
+    if (!hasValidSavedVisits) {
+      finalVisited = visitedShopIds.length;
+      paidCount = paidShopIdsSet.length;
+      feedbackCount = feedbackShopIdsSet.length;
     }
 
-    int finalVisited = visitedShopIds.length;
-    if (finalVisited == 0 && _isToday && finalCollection > 0) {
-      finalVisited = paidShopCount;
+    double finalCollection = txSum;
+    if (finalCollection == 0 && _isToday && summaryTodayPaid > 0) {
+      finalCollection = summaryTodayPaid;
     }
 
     String status = 'below';
@@ -149,12 +212,16 @@ class _SalaryScreenState extends State<SalaryScreen>
       }
     }
 
+    double finalSalary = defaultCommission > 0 ? (finalCollection * defaultCommission / 100.0) : 0.0;
+
     return {
       'todayCollection': finalCollection,
-      'commissionPercent': 0.0,
-      'finalSalary': 0.0,
+      'commissionPercent': defaultCommission,
+      'finalSalary': finalSalary,
       'shopVisitTarget': targetShops,
       'shopsVisitedToday': finalVisited,
+      'paidShopCount': paidCount,
+      'feedbackShopCount': feedbackCount,
       'dayStatus': status,
       'isLive': true,
     };
@@ -221,26 +288,60 @@ class _SalaryScreenState extends State<SalaryScreen>
                       }
 
                       if (!snapshot.hasData || !snapshot.data!.exists) {
-                        if (_isToday) {
-                          return FutureBuilder<Map<String, dynamic>>(
-                            future: _fetchLiveTodayData(),
-                            builder: (context, liveSnap) {
-                              if (liveSnap.connectionState == ConnectionState.waiting) {
-                                return const Center(
-                                  child: CircularProgressIndicator(
-                                    color: AppColors.accentBlue,
-                                  ),
-                                );
-                              }
-                              final liveData = liveSnap.data ?? {};
-                              return _buildContent(liveData, isLiveUnsaved: true);
-                            },
-                          );
-                        }
-                        return _buildEmptyState();
+                        return FutureBuilder<Map<String, dynamic>>(
+                          future: _fetchLiveTodayData(),
+                          builder: (context, liveSnap) {
+                            if (liveSnap.connectionState == ConnectionState.waiting) {
+                              return const Center(
+                                child: CircularProgressIndicator(
+                                  color: AppColors.accentBlue,
+                                ),
+                              );
+                            }
+                            final liveData = liveSnap.data ?? {};
+                            if ((liveData['todayCollection'] ?? 0.0) == 0.0 &&
+                                (liveData['shopsVisitedToday'] ?? 0) == 0 &&
+                                !_isToday) {
+                              return _buildEmptyState();
+                            }
+                            return _buildContent(liveData, isLiveUnsaved: true);
+                          },
+                        );
                       }
 
-                      final data = snapshot.data!.data()!;
+                      final data = Map<String, dynamic>.from(snapshot.data!.data()!);
+                      final paidCnt = (data['paidShopCount'] ?? 0) as int;
+                      final fbCnt = (data['feedbackShopCount'] ?? 0) as int;
+
+                      // If paidShopCount/feedbackShopCount are missing/0 in saved salary doc, enrich from cashcollector_visits/{date}
+                      if (paidCnt == 0 && fbCnt == 0) {
+                        final branchId = BranchContext().branchId;
+                        return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                          future: FirebaseFirestore.instance
+                              .collection('branches')
+                              .doc(branchId)
+                              .collection('cashcollector_visits')
+                              .doc(_dateKey)
+                              .get(),
+                          builder: (context, vSnap) {
+                            if (vSnap.hasData && vSnap.data!.exists) {
+                              final vData = vSnap.data!.data()!;
+                              final pList = vData['paidShopIds'] as List?;
+                              final fList = vData['feedbackShopIds'] as List?;
+
+                              data['paidShopCount'] =
+                                  (vData['paidShopCount'] ?? pList?.length ?? 0);
+                              data['feedbackShopCount'] =
+                                  (vData['feedbackShopCount'] ?? fList?.length ?? 0);
+                              if (data['shopsVisitedToday'] == null || data['shopsVisitedToday'] == 0) {
+                                data['shopsVisitedToday'] = (vData['totalVisited'] ?? vData['shopsVisitedToday'] ?? 0);
+                              }
+                            }
+                            return _buildContent(data, isLiveUnsaved: false);
+                          },
+                        );
+                      }
+
                       return _buildContent(data, isLiveUnsaved: false);
                     },
                   ),
@@ -344,6 +445,8 @@ class _SalaryScreenState extends State<SalaryScreen>
     final salary = _asDouble(data['finalSalary']);
     final target = (data['shopVisitTarget'] ?? 0) as int;
     final visited = (data['shopsVisitedToday'] ?? 0) as int;
+    final paidCnt = (data['paidShopCount'] ?? 0) as int;
+    final fbCnt = (data['feedbackShopCount'] ?? 0) as int;
     final status = data['dayStatus'] as String? ?? 'below';
     final statusInfo = _statusInfo(status);
 
@@ -364,11 +467,13 @@ class _SalaryScreenState extends State<SalaryScreen>
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.info_outline_rounded, color:Colors.green, size: 20),
+                  const Icon(Icons.info_outline_rounded, color: Colors.green, size: 20),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Live collection today. Final salary will be calculated when admin sets commission %.',
+                      pct > 0
+                          ? 'Auto-calculated using default branch commission (${pct.toStringAsFixed(1)}%).'
+                          : 'Live collection today. Admin can adjust commission % if needed.',
                       style: GoogleFonts.poppins(
                         fontSize: 12,
                         color: Colors.green,
@@ -386,7 +491,7 @@ class _SalaryScreenState extends State<SalaryScreen>
           const SizedBox(height: 20),
 
           // ── Shop visits card ───────────────────────────────
-          _buildVisitCard(visited, target, progress, statusInfo),
+          _buildVisitCard(visited, target, progress, statusInfo, paidCnt, fbCnt),
           const SizedBox(height: 20),
 
           // ── Day status banner ──────────────────────────────
@@ -394,7 +499,7 @@ class _SalaryScreenState extends State<SalaryScreen>
           const SizedBox(height: 20),
 
           // ── Breakdown card ─────────────────────────────────
-          _buildBreakdownCard(collection, pct, salary, visited, target, isLiveUnsaved),
+          _buildBreakdownCard(collection, pct, salary, visited, target, paidCnt, fbCnt, isLiveUnsaved),
         ],
       ),
     );
@@ -436,7 +541,7 @@ class _SalaryScreenState extends State<SalaryScreen>
               ),
               const SizedBox(width: 10),
               Text(
-                isLiveUnsaved ? 'Today Collection (Live)' : 'Final Salary',
+                (isLiveUnsaved && pct == 0) ? 'Today Collection (Live)' : 'Final Salary',
                 style: GoogleFonts.poppins(
                   color: AppColors.accentTeal,
                   fontSize: 13,
@@ -447,7 +552,7 @@ class _SalaryScreenState extends State<SalaryScreen>
           ),
           const SizedBox(height: 14),
           Text(
-            isLiveUnsaved
+            (isLiveUnsaved && pct == 0)
                 ? 'Rs ${collection.toStringAsFixed(2)}'
                 : 'Rs ${salary.toStringAsFixed(2)}',
             style: GoogleFonts.poppins(
@@ -459,9 +564,9 @@ class _SalaryScreenState extends State<SalaryScreen>
           ),
           const SizedBox(height: 4),
           Text(
-            isLiveUnsaved
-                ? 'Awaiting admin commission percentage'
-                : 'Rs ${collection.toStringAsFixed(2)} × ${pct.toStringAsFixed(2)}%',
+            pct > 0
+                ? 'Rs ${collection.toStringAsFixed(2)} × ${pct.toStringAsFixed(2)}%'
+                : 'Awaiting admin commission percentage',
             style: GoogleFonts.poppins(
               color: Colors.white38,
               fontSize: 12,
@@ -471,12 +576,12 @@ class _SalaryScreenState extends State<SalaryScreen>
           // Stats row
           Row(
             children: [
-              _miniStatChip('Collection', 'Rs ${collection.toStringAsFixed(0)}',
+              _miniStatChip('Collection for day', 'Rs ${collection.toStringAsFixed(0)}',
                   AppColors.accentBlue),
               const SizedBox(width: 10),
               _miniStatChip(
                   'Commission',
-                  isLiveUnsaved ? 'Pending' : '${pct.toStringAsFixed(2)}%',
+                  pct > 0 ? '${pct.toStringAsFixed(2)}%' : 'Pending',
                   AppColors.accentPurple),
             ],
           ),
@@ -520,7 +625,7 @@ class _SalaryScreenState extends State<SalaryScreen>
   }
 
   Widget _buildVisitCard(int visited, int target, double progress,
-      Map<String, dynamic> statusInfo) {
+      Map<String, dynamic> statusInfo, int paidCnt, int fbCnt) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -598,6 +703,35 @@ class _SalaryScreenState extends State<SalaryScreen>
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.grey[100],
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Paid: $paidCnt shops',
+                  style: GoogleFonts.poppins(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.successDark,
+                  ),
+                ),
+                Text(
+                  'Feedback: $fbCnt shops',
+                  style: GoogleFonts.poppins(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.accentBlueDark,
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 14),
           ClipRRect(
@@ -678,7 +812,7 @@ class _SalaryScreenState extends State<SalaryScreen>
   }
 
   Widget _buildBreakdownCard(double collection, double pct, double salary,
-      int visited, int target, bool isLiveUnsaved) {
+      int visited, int target, int paidCnt, int fbCnt, bool isLiveUnsaved) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -714,21 +848,33 @@ class _SalaryScreenState extends State<SalaryScreen>
           ),
           _breakdownRow(
             'Commission Rate',
-            isLiveUnsaved ? 'Pending' : '${pct.toStringAsFixed(2)}%',
+            pct > 0 ? '${pct.toStringAsFixed(2)}%' : 'Pending',
             Icons.percent_rounded,
             AppColors.accentTeal,
           ),
           _breakdownRow(
             'Final Salary',
-            isLiveUnsaved ? 'Pending' : 'Rs ${salary.toStringAsFixed(2)}',
+            salary > 0 ? 'Rs ${salary.toStringAsFixed(2)}' : 'Pending',
             Icons.account_balance_wallet_rounded,
             AppColors.successDark,
           ),
           const Divider(height: 20),
           _breakdownRow(
-            'Shops Visited',
+            'Shops Visited Total',
             '$visited',
             Icons.check_circle_rounded,
+            AppColors.accentBlueDark,
+          ),
+          _breakdownRow(
+            'Paid Shops',
+            '$paidCnt',
+            Icons.monetization_on_outlined,
+            AppColors.successDark,
+          ),
+          _breakdownRow(
+            'Feedback Shops',
+            '$fbCnt',
+            Icons.rate_review_outlined,
             AppColors.accentBlueDark,
           ),
           _breakdownRow(
@@ -805,7 +951,7 @@ class _SalaryScreenState extends State<SalaryScreen>
             ),
             const SizedBox(height: 8),
             Text(
-              'No salary record was saved for ${_formattedDate(_selectedDate)}.',
+              'No payment transactions or shop feedback records exist for ${_formattedDate(_selectedDate)}.',
               textAlign: TextAlign.center,
               style: GoogleFonts.poppins(
                 fontSize: 13,
