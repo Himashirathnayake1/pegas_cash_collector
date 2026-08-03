@@ -365,175 +365,7 @@ class _SalaryScreenState extends State<SalaryScreen>
     }
   }
 
-  // ── POPUP DIALOG: How Salary is Calculated ────────────────
-  void _showCalculationHelpDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.amber.withOpacity(0.2),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.lightbulb_rounded,
-                  color: Colors.amber, size: 22),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'How My Salary is Calculated',
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF1A2744),
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Your salary is made of 2 parts:',
-                style: GoogleFonts.poppins(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF1A2744),
-                ),
-              ),
-              const SizedBox(height: 12),
-              _dialogRuleBullet(
-                number: '1',
-                title: 'Incentive Salary (Cash Collection)',
-                formula: 'Total Cash Collection × Commission %',
-                description:
-                    'Earn a commission percentage on all cash collected from shops.',
-                color: AppColors.accentTealDark,
-              ),
-              const SizedBox(height: 14),
-              _dialogRuleBullet(
-                number: '2',
-                title: 'Basic Salary (Shop Visit Target)',
-                formula: 'Basic Salary/Day × Days × Visit Achievement %',
-                description:
-                    'Earn your daily basic salary based on shops visited (Paid + Feedback shops).',
-                color: AppColors.accentBlueDark,
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.calculate_rounded,
-                        size: 18, color: Color(0xFF1A2744)),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Total Salary = Incentive Salary + Basic Salary',
-                        style: GoogleFonts.poppins(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: const Color(0xFF1A2744),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Got It',
-              style: GoogleFonts.poppins(
-                fontWeight: FontWeight.w700,
-                color: AppColors.accentBlueDark,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _dialogRuleBullet({
-    required String number,
-    required String title,
-    required String formula,
-    required String description,
-    required Color color,
-  }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 24,
-          height: 24,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.15),
-            shape: BoxShape.circle,
-          ),
-          child: Text(
-            number,
-            style: GoogleFonts.poppins(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: color,
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: GoogleFonts.poppins(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF1A2744),
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                'Formula: $formula',
-                style: GoogleFonts.poppins(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: color,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                description,
-                style: GoogleFonts.poppins(
-                  fontSize: 11,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+ 
 
   @override
   Widget build(BuildContext context) {
@@ -620,11 +452,7 @@ class _SalaryScreenState extends State<SalaryScreen>
               ],
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.help_outline_rounded, color: Colors.white),
-            tooltip: 'How Salary is Calculated',
-            onPressed: _showCalculationHelpDialog,
-          ),
+         
           GestureDetector(
             onTap: _pickDateRange,
             child: Container(
@@ -689,18 +517,18 @@ class _SalaryScreenState extends State<SalaryScreen>
           _buildDateRangeBanner(),
           const SizedBox(height: 12),
 
-         
-
-          // ── STEP 3: Part 1 - Incentive Salary ───────────
-          _buildIncentiveCard(collection, pct, incentiveSalary),
-          const SizedBox(height: 16),
-
           // ── STEP 4: Part 2 - Basic Salary & Visits ─────
           if (hasBasic) ...[
             _buildBasicCard(basicSalary, basicEarned, visitPct, visited,
                 target, paidCnt, fbCnt, statusInfo, visitProgress),
             const SizedBox(height: 16),
           ],
+         
+
+          // ── STEP 3: Part 1 - Incentive Salary ───────────
+          _buildIncentiveCard(collection, pct, incentiveSalary),
+          const SizedBox(height: 16),
+
  // ── STEP 6: Day Status Banner ───────────────────
           _buildDayStatusBanner(statusInfo, status),
           const SizedBox(height: 16),
@@ -709,10 +537,6 @@ class _SalaryScreenState extends State<SalaryScreen>
               hasBasic),
           const SizedBox(height: 16),
 
-         
- // ── STEP 2: How Salary Works Popup Trigger Button
-          _buildHelpDialogTriggerButton(),
-          const SizedBox(height: 16),
           // ── STEP 7: Full Summary Breakdown ──────────────
           _buildBreakdownCard(collection, pct, incentiveSalary,
               basicSalary, basicEarned, visitPct, totalSalary, visited,
@@ -816,49 +640,7 @@ class _SalaryScreenState extends State<SalaryScreen>
     );
   }
 
-  /// Trigger Button for Calculation Explanation Dialog
-  Widget _buildHelpDialogTriggerButton() {
-    return InkWell(
-      onTap: _showCalculationHelpDialog,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.amber.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.amber.withOpacity(0.4)),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.help_outline_rounded,
-                color: Colors.amber, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'How is my salary calculated?',
-                style: GoogleFonts.poppins(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF1A2744),
-                ),
-              ),
-            ),
-            Text(
-              'Tap to view formula',
-              style: GoogleFonts.poppins(
-                fontSize: 11,
-                color: Colors.grey[600],
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(width: 4),
-            const Icon(Icons.chevron_right_rounded,
-                size: 18, color: Color(0xFF1A2744)),
-          ],
-        ),
-      ),
-    );
-  }
+
 
   /// Incentive Salary Card
   Widget _buildIncentiveCard(
@@ -903,10 +685,10 @@ class _SalaryScreenState extends State<SalaryScreen>
                         color: const Color(0xFF1A2744),
                       ),
                     ),
-                    Text(
-                      'This is Commission for cash collection for day',
+                   Text(
+                      'This is your Commision ased on TODAY COLLECTION. Collect more to Earn more',
                       style: GoogleFonts.poppins(
-                          fontSize: 11, color: Colors.grey[500]),
+                          fontSize: 11, color: Colors.red[500]),
                     ),
                   ],
                 ),
@@ -980,33 +762,7 @@ class _SalaryScreenState extends State<SalaryScreen>
             ],
           ),
 
-          if (pct > 0) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.accentTealDark.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.info_outline_rounded,
-                      size: 14, color: AppColors.accentTealDark),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      'Calculation: Rs ${collection.toStringAsFixed(2)} × ${pct.toStringAsFixed(2)}% = Rs ${incentive.toStringAsFixed(2)}',
-                      style: GoogleFonts.poppins(
-                        fontSize: 11,
-                        color: AppColors.accentTealDark,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+         
         ],
       ),
     );
@@ -1065,9 +821,9 @@ class _SalaryScreenState extends State<SalaryScreen>
                       ),
                     ),
                     Text(
-                      'this is your basic salary based on shop visits. Visit more to earn more',
+                      'this is your basic salary based on shop visits (FEEDBACKED AND PAID SHOPS). Visit more to Earn more',
                       style: GoogleFonts.poppins(
-                          fontSize: 11, color: Colors.grey[500]),
+                          fontSize: 11, color: Colors.red[500]),
                     ),
                   ],
                 ),
@@ -1213,33 +969,7 @@ class _SalaryScreenState extends State<SalaryScreen>
             ],
           ),
 
-          if (basicSalary > 0 && target > 0) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.accentBlueDark.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.info_outline_rounded,
-                      size: 14, color: AppColors.accentBlueDark),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      'Calculation: Rs ${basicSalary.toStringAsFixed(0)}/day × $_numberOfDays days × ${visitPct.toStringAsFixed(1)}% visits = Rs ${basicEarned.toStringAsFixed(2)}',
-                      style: GoogleFonts.poppins(
-                        fontSize: 11,
-                        color: AppColors.accentBlueDark,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+         
         ],
       ),
     );
@@ -1313,10 +1043,11 @@ class _SalaryScreenState extends State<SalaryScreen>
               ),
               child: Row(
                 children: [
-                  Expanded(
-                      child: _chip('Part 1: Incentive',
-                          'Rs ${incentive.toStringAsFixed(2)}',
-                          AppColors.accentTeal)),
+                   Expanded(
+                      child: _chip(
+                          'Part 1: Basic Earned',
+                          'Rs ${basic.toStringAsFixed(2)}',
+                          Colors.amber)),
                   Container(
                     height: 36,
                     width: 1,
@@ -1335,10 +1066,10 @@ class _SalaryScreenState extends State<SalaryScreen>
                         const EdgeInsets.symmetric(horizontal: 10),
                   ),
                   Expanded(
-                      child: _chip(
-                          'Part 2: Basic Earned',
-                          'Rs ${basic.toStringAsFixed(2)}',
-                          Colors.amber)),
+                      child: _chip('Part 2: Incentive',
+                          'Rs ${incentive.toStringAsFixed(2)}',
+                          AppColors.accentTeal)),
+                 
                 ],
               ),
             ),
@@ -1467,46 +1198,48 @@ class _SalaryScreenState extends State<SalaryScreen>
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          const Divider(height: 1),
-          const SizedBox(height: 12),
-          _row('Total Cash Collection',
-              'Rs ${collection.toStringAsFixed(2)}',
-              Icons.monetization_on_rounded, const Color(0xFF1B5E5C)),
-          const Divider(height: 18),
-          _row('Commission Rate (%)',
-              pct > 0 ? '${pct.toStringAsFixed(2)}%' : 'Pending',
-              Icons.percent_rounded, AppColors.accentTealDark),
-          _row('Part 1: Incentive Salary',
-              'Rs ${incentive.toStringAsFixed(2)}',
-              Icons.trending_up_rounded, AppColors.accentTealDark),
+       
+          const SizedBox(height: 6),
           if (hasBasic) ...[
             const Divider(height: 18),
-            _row('Basic Salary / Day',
+            _row('Basic Salary Given',
                 'Rs ${basicSalary.toStringAsFixed(2)}',
                 Icons.account_balance_wallet_rounded,
                 AppColors.accentBlueDark),
-            _row('Visit Target Achievement',
+                
+            _row('Your Visit Target Achievement',
                 '${visitPct.toStringAsFixed(1)}%',
                 Icons.donut_large_rounded, AppColors.accentBlueDark),
-            _row('Part 2: Basic Salary Earned',
+            _row('Part 1: Your Basic Salary Earned',
                 'Rs ${basicEarned.toStringAsFixed(2)}',
                 Icons.check_circle_outline_rounded,
                 AppColors.accentBlueDark),
+               Text(
+                'Basic Salary is calculated from PAID and FEEDBACKED shops.',
+                style: GoogleFonts.poppins(
+                    fontSize: 14, color: Colors.red[500]),
+              ), 
           ],
+          _row('Total Cash Collection',
+              'Rs ${collection.toStringAsFixed(2)}',
+              Icons.monetization_on_rounded, const Color(0xFF1B5E5C)),
+         
+          _row('Commission Rate (%)',
+              pct > 0 ? '${pct.toStringAsFixed(2)}%' : 'Pending',
+              Icons.percent_rounded, AppColors.accentTealDark),
+          _row('Part 2: Your Incentive Salary',
+              'Rs ${incentive.toStringAsFixed(2)}',
+              Icons.trending_up_rounded, AppColors.accentTealDark),
+             Text(
+                'Commission is calculate from TODAY COLLECTION.',
+                style: GoogleFonts.poppins(
+                    fontSize: 14, color: Colors.red[500]),
+              ), 
           const Divider(height: 18),
           _row('TOTAL FINAL SALARY',
               'Rs ${totalSalary.toStringAsFixed(2)}',
               Icons.workspace_premium_rounded, Colors.amber.shade700),
-          const Divider(height: 18),
-          _row('Shops Visited Count', '$visited',
-              Icons.check_circle_rounded, AppColors.accentBlueDark),
-          _row('Paid Shops', '$paidCnt',
-              Icons.monetization_on_outlined, AppColors.successDark),
-          _row('Feedback Shops', '$fbCnt',
-              Icons.rate_review_outlined, AppColors.accentBlueDark),
-          _row('Target Shops (Total)', '$target shops',
-              Icons.flag_rounded, AppColors.warningDark),
+          
         ],
       ),
     );
