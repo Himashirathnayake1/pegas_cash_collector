@@ -48,6 +48,7 @@ dependencies:
   latlong2: ^0.9.1
   http: ^1.2.2
   connectivity_plus: ^6.1.5
+  mobile_scanner: ^5.2.3
 
 dev_dependencies:
   flutter_test:

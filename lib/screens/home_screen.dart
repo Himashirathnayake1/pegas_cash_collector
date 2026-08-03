@@ -15,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shimmer/shimmer.dart';
 import 'low_level_shops_screen.dart';
+import 'shop_qr_scanner_screen.dart';
 import '../services/mock_data_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/app_theme.dart';
@@ -336,6 +337,25 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                   ),
                 ),
               ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Scan shop QR',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ShopQrScannerScreen(),
+                ),
+              );
+            },
+            icon: const Icon(
+              Icons.qr_code_scanner_rounded,
+              color: AppColors.lightTextPrimary,
+            ),
+            style: IconButton.styleFrom(
+              backgroundColor: AppColors.lightCardBorder,
+              padding: const EdgeInsets.all(12),
             ),
           ),
           IconButton(
