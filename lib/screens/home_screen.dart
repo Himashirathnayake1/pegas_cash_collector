@@ -65,8 +65,10 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 800),
     )..forward();
-    _fadeAnimation =
-        CurvedAnimation(parent: _fadeController, curve: Curves.easeOut);
+    _fadeAnimation = CurvedAnimation(
+      parent: _fadeController,
+      curve: Curves.easeOut,
+    );
   }
 
   void _startUiUpdater() {
@@ -101,17 +103,18 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
       print('📊 Fetching daily target for branch: $branchId');
 
       final firestore = FirebaseFirestore.instance;
-      final targetDoc = await firestore
-          .collection('branches')
-          .doc(branchId)
-          .collection('admin')
-          .doc('stats')
-          .get();
+      final targetDoc =
+          await firestore
+              .collection('branches')
+              .doc(branchId)
+              .collection('admin')
+              .doc('stats')
+              .get();
 
       if (targetDoc.exists) {
         final data = targetDoc.data();
         final target = data?['cashcollector_target'];
-        
+
         setState(() {
           targetCollectAmount = (target is num) ? target.toDouble() : 0.0;
         });
@@ -150,7 +153,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
 
       final firestore = FirebaseFirestore.instance;
       final updatedRoutes = <Map<String, dynamic>>[];
-      
+
       // Get branch ID from context
       final branchId = BranchContext().branchId;
       if (branchId == null) {
@@ -162,13 +165,14 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
       print('📍 Loading routes for branch: $branchId');
 
       // Get all routes for this branch, ordered by 'order' field
-      final routesSnap = await firestore
-          .collection('branches')
-          .doc(branchId)
-          .collection('routes')
-          .orderBy('order', descending: false)
-          .get();
-          
+      final routesSnap =
+          await firestore
+              .collection('branches')
+              .doc(branchId)
+              .collection('routes')
+              .orderBy('order', descending: false)
+              .get();
+
       if (routesSnap.docs.isEmpty) {
         print('⚠️ No routes found for branch $branchId');
         updatedRoutes.add({
@@ -180,13 +184,14 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
         for (var routeDoc in routesSnap.docs) {
           int shopCount = 0;
           // Count shops in this route
-          final shopsSnap = await firestore
-              .collection('branches')
-              .doc(branchId)
-              .collection('routes')
-              .doc(routeDoc.id)
-              .collection('shops')
-              .get();
+          final shopsSnap =
+              await firestore
+                  .collection('branches')
+                  .doc(branchId)
+                  .collection('routes')
+                  .doc(routeDoc.id)
+                  .collection('shops')
+                  .get();
           shopCount = shopsSnap.docs.length;
 
           updatedRoutes.add({
@@ -195,7 +200,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
             'shopCount': shopCount,
             'order': routeDoc.data()['order'] ?? 0,
           });
-          
+
           print('✅ Loaded route: ${routeDoc.id} with $shopCount shops');
         }
       }
@@ -240,7 +245,9 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
             .update({'order': i});
       }
 
-      debugPrint('✅ Route order persisted: ${allRoutes.map((r) => r['name']).toList()}');
+      debugPrint(
+        '✅ Route order persisted: ${allRoutes.map((r) => r['name']).toList()}',
+      );
     } catch (e) {
       debugPrint('❌ Error persisting route order: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -270,15 +277,17 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                 // Search and Filter
                 // Routes List
                 Expanded(
-                  child: isRoutesLoading
-                      ? _buildSkeletonRoutesList()
-                      : RefreshIndicator(
-                          onRefresh: _refreshData,
-                          color: AppColors.accentTealDark,
-                          child: allRoutes.isEmpty
-                              ? _buildEmptyState()
-                              : _buildRoutesList(allRoutes),
-                        ),
+                  child:
+                      isRoutesLoading
+                          ? _buildSkeletonRoutesList()
+                          : RefreshIndicator(
+                            onRefresh: _refreshData,
+                            color: AppColors.accentTealDark,
+                            child:
+                                allRoutes.isEmpty
+                                    ? _buildEmptyState()
+                                    : _buildRoutesList(allRoutes),
+                          ),
                 ),
                 // Fixed bottom target card
                 _buildTargetCard(),
@@ -309,8 +318,10 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
             onPressed: () {
               _scaffoldKey.currentState?.openDrawer();
             },
-            icon: const Icon(Icons.menu_rounded,
-                color: AppColors.lightTextPrimary),
+            icon: const Icon(
+              Icons.menu_rounded,
+              color: AppColors.lightTextPrimary,
+            ),
             style: IconButton.styleFrom(
               backgroundColor: AppColors.lightCardBorder,
               padding: const EdgeInsets.all(12),
@@ -360,8 +371,10 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
           ),
           IconButton(
             onPressed: _refreshData,
-            icon: const Icon(Icons.refresh_rounded,
-                color: AppColors.lightTextPrimary),
+            icon: const Icon(
+              Icons.refresh_rounded,
+              color: AppColors.lightTextPrimary,
+            ),
             style: IconButton.styleFrom(
               backgroundColor: AppColors.lightCardBorder,
               padding: const EdgeInsets.all(12),
@@ -455,13 +468,15 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                     SizedBox(height: isSmallScreen ? 4 : 6),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 4),
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.15),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
-                          widget.selectedArea,
+                        widget.selectedArea,
                         style: GoogleFonts.poppins(
                           fontSize: subtitleFontSize,
                           fontWeight: FontWeight.w500,
@@ -478,8 +493,9 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
               // Menu Items Section
               Expanded(
                 child: SingleChildScrollView(
-                  padding:
-                      EdgeInsets.symmetric(horizontal: isSmallScreen ? 12 : 16),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isSmallScreen ? 12 : 16,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -504,7 +520,8 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) => const BalanceInHandScreen()),
+                              builder: (_) => const BalanceInHandScreen(),
+                            ),
                           );
                         },
                         fontSize: menuItemFontSize,
@@ -521,7 +538,8 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) => const CollectorStockListPage()),
+                              builder: (_) => const CollectorStockListPage(),
+                            ),
                           );
                         },
                         fontSize: menuItemFontSize,
@@ -538,7 +556,8 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) => const AddReceipts()),
+                              builder: (_) => const AddReceipts(),
+                            ),
                           );
                         },
                         fontSize: menuItemFontSize,
@@ -591,7 +610,8 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) => const AchievementsScreen()),
+                              builder: (_) => const AchievementsScreen(),
+                            ),
                           );
                         },
                         fontSize: menuItemFontSize,
@@ -608,7 +628,8 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) => const SalaryScreen()),
+                              builder: (_) => const SalaryScreen(),
+                            ),
                           );
                         },
                         fontSize: menuItemFontSize,
@@ -625,7 +646,8 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) => TermsAndConditionsPage()),
+                              builder: (_) => TermsAndConditionsPage(),
+                            ),
                           );
                         },
                         fontSize: menuItemFontSize,
@@ -709,10 +731,10 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
         borderRadius: BorderRadius.circular(12),
         child: Container(
           padding: EdgeInsets.symmetric(
-              horizontal: paddingH, vertical: paddingV + 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
+            horizontal: paddingH,
+            vertical: paddingV + 8,
           ),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
           child: Row(
             children: [
               Container(
@@ -748,7 +770,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
         ),
       ),
     );
-  }  // Search and filter methods removed - now using route view instead of shop view
+  } // Search and filter methods removed - now using route view instead of shop view
 
   Widget _buildSkeletonRoutesList() {
     return ListView.builder(
@@ -781,9 +803,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
             decoration: BoxDecoration(
               color: const Color(0xFF0D2137),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: const Color(0xFF1A3A5C),
-              ),
+              border: Border.all(color: const Color(0xFF1A3A5C)),
             ),
             child: Row(
               children: [
@@ -845,11 +865,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
         shrinkWrap: true,
         children: [
           const SizedBox(height: 60),
-          const Icon(
-            Icons.route,
-            size: 64,
-            color: AppColors.lightTextMuted,
-          ),
+          const Icon(Icons.route, size: 64, color: AppColors.lightTextMuted),
           const SizedBox(height: 16),
           Center(
             child: Text(
@@ -898,10 +914,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
       builder: (context, value, child) {
         return Transform.translate(
           offset: Offset(0, 20 * (1 - value)),
-          child: Opacity(
-            opacity: value,
-            child: child,
-          ),
+          child: Opacity(opacity: value, child: child),
         );
       },
       child: Container(
@@ -913,10 +926,11 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => RouteShopsScreen(
-                    routeId: route['id'],
-                    routeName: route['name'],
-                  ),
+                  builder:
+                      (context) => RouteShopsScreen(
+                        routeId: route['id'],
+                        routeName: route['name'],
+                      ),
                 ),
               );
             },
@@ -926,9 +940,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
               decoration: BoxDecoration(
                 color: const Color(0xFF0D2137),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: const Color(0xFF1A3A5C),
-                ),
+                border: Border.all(color: const Color(0xFF1A3A5C)),
                 boxShadow: [
                   BoxShadow(
                     color: const Color(0xFF0D2137).withOpacity(0.5),
@@ -1030,10 +1042,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
       builder: (context, value, child) {
         return Transform.translate(
           offset: Offset(0, 20 * (1 - value)),
-          child: Opacity(
-            opacity: value,
-            child: child,
-          ),
+          child: Opacity(opacity: value, child: child),
         );
       },
       child: Container(
@@ -1045,30 +1054,31 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => BalanceScreen(
-                    shopName: shop['name'],
-                    routeName: widget.selectedArea,
-                    shopId: shop['id'],
-                    onBalanceAdjusted: (shopName, reducedAmount) async {
-                      // allShops reference removed - this method is no longer used
-                      // final updatedShops =
-                      //     List<Map<String, dynamic>>.from(allShops);
-                      // final shopIndex =
-                      //     updatedShops.indexWhere((s) => s['name'] == shopName);
-                      // if (shopIndex != -1) {
-                      //   final shopId = updatedShops[shopIndex]['id'];
-                      //   final currentAmount = updatedShops[shopIndex]['amount'];
-                      //   final newAmount = currentAmount - reducedAmount;
+                  builder:
+                      (context) => BalanceScreen(
+                        shopName: shop['name'],
+                        routeName: widget.selectedArea,
+                        shopId: shop['id'],
+                        onBalanceAdjusted: (shopName, reducedAmount) async {
+                          // allShops reference removed - this method is no longer used
+                          // final updatedShops =
+                          //     List<Map<String, dynamic>>.from(allShops);
+                          // final shopIndex =
+                          //     updatedShops.indexWhere((s) => s['name'] == shopName);
+                          // if (shopIndex != -1) {
+                          //   final shopId = updatedShops[shopIndex]['id'];
+                          //   final currentAmount = updatedShops[shopIndex]['amount'];
+                          //   final newAmount = currentAmount - reducedAmount;
 
-                      //   mockService.updateShopBalance(
-                      //     widget.selectedArea, shopId, reducedAmount);
+                          //   mockService.updateShopBalance(
+                          //     widget.selectedArea, shopId, reducedAmount);
 
-                        // setState(() {
-                        //   // allShops = updatedShops; // removed - method no longer used
-                        // });
-                      // }
-                    },
-                  ),
+                          // setState(() {
+                          //   // allShops = updatedShops; // removed - method no longer used
+                          // });
+                          // }
+                        },
+                      ),
                 ),
               );
             },
@@ -1079,15 +1089,17 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                 color: const Color(0xFF0D2137),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: isPaid
-                      ? AppColors.successDark.withOpacity(0.5)
-                      : const Color(0xFF1A3A5C),
+                  color:
+                      isPaid
+                          ? AppColors.successDark.withOpacity(0.5)
+                          : const Color(0xFF1A3A5C),
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: isPaid
-                        ? AppColors.successDark.withOpacity(0.2)
-                        : const Color(0xFF0D2137).withOpacity(0.5),
+                    color:
+                        isPaid
+                            ? AppColors.successDark.withOpacity(0.2)
+                            : const Color(0xFF0D2137).withOpacity(0.5),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),
@@ -1099,9 +1111,10 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: isPaid
-                          ? AppColors.successDark.withOpacity(0.2)
-                          : AppColors.accentTeal.withOpacity(0.15),
+                      color:
+                          isPaid
+                              ? AppColors.successDark.withOpacity(0.2)
+                              : AppColors.accentTeal.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Icon(
@@ -1121,9 +1134,10 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                           style: GoogleFonts.poppins(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
-                            color: isPaid
-                                ? AppColors.success
-                                : AppColors.accentTeal,
+                            color:
+                                isPaid
+                                    ? AppColors.success
+                                    : AppColors.accentTeal,
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -1148,7 +1162,9 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                         if (isPaid && shop['paidAmount'] != null)
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 4),
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: AppColors.success.withOpacity(0.2),
                               borderRadius: BorderRadius.circular(8),
@@ -1165,7 +1181,9 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                         else if (!isPaid && shop['amount'] != null)
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 4),
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: AppColors.warning.withOpacity(0.2),
                               borderRadius: BorderRadius.circular(8),
@@ -1191,7 +1209,9 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                       if (isPaid && remainingSeconds > 0)
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
                           decoration: BoxDecoration(
                             color: AppColors.error.withOpacity(0.2),
                             borderRadius: BorderRadius.circular(10),
@@ -1236,13 +1256,18 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                                 );
                               } else {
                                 final googleMapsUrl = Uri.parse(
-                                    "https://www.google.com/maps/search/?api=1&query=$lat,$lng");
-                                launchUrl(googleMapsUrl,
-                                    mode: LaunchMode.externalApplication);
+                                  "https://www.google.com/maps/search/?api=1&query=$lat,$lng",
+                                );
+                                launchUrl(
+                                  googleMapsUrl,
+                                  mode: LaunchMode.externalApplication,
+                                );
                               }
                             },
-                            icon:
-                                const Icon(Icons.location_on_rounded, size: 24),
+                            icon: const Icon(
+                              Icons.location_on_rounded,
+                              size: 24,
+                            ),
                             color: AppColors.error,
                           ),
                         ),
@@ -1274,8 +1299,9 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                             icon: const Icon(Icons.call_rounded, size: 20),
                             color: AppColors.accentTeal,
                             style: IconButton.styleFrom(
-                              backgroundColor:
-                                  AppColors.accentTeal.withOpacity(0.2),
+                              backgroundColor: AppColors.accentTeal.withOpacity(
+                                0.2,
+                              ),
                               padding: const EdgeInsets.all(8),
                             ),
                           ),
@@ -1321,8 +1347,11 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                   color: AppColors.warningDark.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Icon(Icons.star_rounded,
-                    color: AppColors.warningDark, size: 26),
+                child: const Icon(
+                  Icons.star_rounded,
+                  color: AppColors.warningDark,
+                  size: 26,
+                ),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -1432,8 +1461,9 @@ Widget paidShopsSummaryCard() {
           decoration: BoxDecoration(
             color: AppColors.lightSurface,
             borderRadius: BorderRadius.circular(16),
-            border:
-                Border.all(color: AppColors.accentBlueDark.withOpacity(0.3)),
+            border: Border.all(
+              color: AppColors.accentBlueDark.withOpacity(0.3),
+            ),
           ),
           child: Column(
             children: [

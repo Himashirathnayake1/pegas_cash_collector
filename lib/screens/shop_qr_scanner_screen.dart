@@ -43,14 +43,16 @@ class _ShopQrScannerScreenState extends State<ShopQrScannerScreen> {
     }
 
     final firestore = FirebaseFirestore.instance;
-    final routesSnapshot = await firestore
-        .collection('branches')
-        .doc(branchId)
-        .collection('routes')
-        .get();
+    final routesSnapshot =
+        await firestore
+            .collection('branches')
+            .doc(branchId)
+            .collection('routes')
+            .get();
 
     for (final routeDoc in routesSnapshot.docs) {
-      final shopDoc = await routeDoc.reference.collection('shops').doc(shopId).get();
+      final shopDoc =
+          await routeDoc.reference.collection('shops').doc(shopId).get();
       if (shopDoc.exists) {
         return {
           'routeId': routeDoc.id,
@@ -79,9 +81,10 @@ class _ShopQrScannerScreenState extends State<ShopQrScannerScreen> {
       return;
     }
 
-    final code = capture.barcodes.isNotEmpty
-        ? capture.barcodes.first.rawValue?.trim()
-        : null;
+    final code =
+        capture.barcodes.isNotEmpty
+            ? capture.barcodes.first.rawValue?.trim()
+            : null;
 
     if (code == null || code.isEmpty) {
       _showMessage('Invalid QR code. Please scan a shop QR.', isError: true);
@@ -117,19 +120,23 @@ class _ShopQrScannerScreenState extends State<ShopQrScannerScreen> {
       final routeId = result['routeId']?.toString() ?? '';
 
       if (routeId.isEmpty) {
-        _showMessage('Unable to open shop balance. Route not found.', isError: true);
+        _showMessage(
+          'Unable to open shop balance. Route not found.',
+          isError: true,
+        );
         await _scannerController.start();
         return;
       }
 
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (context) => BalanceScreen(
-            shopName: shopName,
-            routeName: routeId,
-            shopId: code,
-            onBalanceAdjusted: (shopName, reducedAmount) {},
-          ),
+          builder:
+              (context) => BalanceScreen(
+                shopName: shopName,
+                routeName: routeId,
+                shopId: code,
+                onBalanceAdjusted: (shopName, reducedAmount) {},
+              ),
         ),
       );
     } catch (e) {
@@ -168,13 +175,17 @@ class _ShopQrScannerScreenState extends State<ShopQrScannerScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              isPermissionDenied ? Icons.no_photography_rounded : Icons.error_outline_rounded,
+              isPermissionDenied
+                  ? Icons.no_photography_rounded
+                  : Icons.error_outline_rounded,
               size: 72,
               color: AppColors.errorDark,
             ),
             const SizedBox(height: 16),
             Text(
-              isPermissionDenied ? 'Camera permission required' : 'Scanner unavailable',
+              isPermissionDenied
+                  ? 'Camera permission required'
+                  : 'Scanner unavailable',
               textAlign: TextAlign.center,
               style: GoogleFonts.poppins(
                 fontSize: 20,
