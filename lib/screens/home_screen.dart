@@ -36,15 +36,9 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
   final String googleFormUrl =
       "https://docs.google.com/forms/d/e/1FAIpQLSfZOSjqEHGOQuRZeCr6XF7JWrqLbFronAMdiHJ28d853Nau8g/viewform?usp=header";
 
-  bool isBalanceLoading = false;
   bool isTodayCollectionLoading = false;
-  bool isWeekCollectionLoading = false;
-  double totalPaidAcrossRoutes = 0;
   bool isUploading = false;
   double totalPaidTodayAmount = 0;
-  double totalPaidThisWeekAmount = 0;
-  double targetCollectAmount = 0.0;
-  final mockService = MockDataService();
 
   // Routes list variables
   List<Map<String, dynamic>> allRoutes = [];
@@ -57,8 +51,6 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    _loadMockData();
-    _fetchDailyTarget();
     _loadRoutes();
     _startUiUpdater();
     _fadeController = AnimationController(
@@ -88,60 +80,82 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  void _loadMockData() {
-    setState(() {
-      totalPaidAcrossRoutes = mockService.latestTotalPaid;
-      totalPaidTodayAmount = mockService.todayTotalPaid;
-      totalPaidThisWeekAmount = mockService.getWeekPaid();
-      // targetCollectAmount is now fetched from Firestore
-    });
-  }
-
-  Future<void> _fetchDailyTarget() async {
-    try {
-      final branchId = BranchContext().branchId;
-      print('📊 Fetching daily target for branch: $branchId');
-
-      final firestore = FirebaseFirestore.instance;
-      final targetDoc =
-          await firestore
-              .collection('branches')
-              .doc(branchId)
-              .collection('admin')
-              .doc('stats')
-              .get();
-
-      if (targetDoc.exists) {
-        final data = targetDoc.data();
-        final target = data?['cashcollector_target'];
-
-        setState(() {
-          targetCollectAmount = (target is num) ? target.toDouble() : 0.0;
-        });
-        print('✅ Daily target loaded: Rs. $targetCollectAmount');
-      } else {
-        print('⚠️ Target document not found');
-        setState(() {
-          targetCollectAmount = mockService.targetWeekAmount;
-        });
-      }
-    } catch (e) {
-      print('❌ Error fetching daily target: $e');
-      setState(() {
-        targetCollectAmount = mockService.targetWeekAmount;
-      });
-    }
-  }
-
   Future<void> _refreshData() async {
     setState(() {
       isUploading = true;
     });
     await _loadRoutes();
-    _loadMockData();
-    await _fetchDailyTarget();
     setState(() {
       isUploading = false;
+    });
+  }
+
+  double _toDouble(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString()) ?? 0.0;
+  }
+
+  Future<double> _sumTodayCollectionForShops(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> shopDocs,
+    Timestamp startOfDay,
+    Timestamp endOfDay,
+  ) async {
+    double total = 0.0;
+    const int batchSize = 10;
+
+    for (int i = 0; i < shopDocs.length; i += batchSize) {
+      final batch = shopDocs.skip(i).take(batchSize);
+      final snapshots = await Future.wait(
+        batch.map((shopDoc) {
+          return shopDoc.reference
+              .collection('transactions')
+              .where('timestamp', isGreaterThanOrEqualTo: startOfDay)
+              .where('timestamp', isLessThanOrEqualTo: endOfDay)
+              .get();
+        }),
+      );
+
+      for (final txSnapshot in snapshots) {
+        for (final txDoc in txSnapshot.docs) {
+          final txData = txDoc.data();
+          final typeRaw = txData['type'];
+          final normalizedType = typeRaw?.toString().toLowerCase();
+          final isCollectionType =
+              normalizedType == null ||
+              normalizedType == 'paid' ||
+              normalizedType == 'partialpaid';
+
+          if (!isCollectionType) continue;
+          total += _toDouble(txData['amount']);
+        }
+      }
+    }
+
+    return total;
+  }
+
+  void _updateRouteCollection({
+    required String routeId,
+    required int shopCount,
+    required double todayCollection,
+    required bool isLoading,
+  }) {
+    if (!mounted) return;
+
+    setState(() {
+      final routeIndex = allRoutes.indexWhere(
+        (route) => route['id'] == routeId,
+      );
+      if (routeIndex == -1) return;
+
+      allRoutes[routeIndex]['shopCount'] = shopCount;
+      allRoutes[routeIndex]['todayCollection'] = todayCollection;
+      allRoutes[routeIndex]['isCollectionLoading'] = isLoading;
+
+      totalPaidTodayAmount = allRoutes.fold<double>(0.0, (sum, route) {
+        return sum + _toDouble(route['todayCollection']);
+      });
     });
   }
 
@@ -152,7 +166,13 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
       await Future.delayed(const Duration(milliseconds: 300));
 
       final firestore = FirebaseFirestore.instance;
-      final updatedRoutes = <Map<String, dynamic>>[];
+      final DateTime now = DateTime.now();
+      final Timestamp startOfDay = Timestamp.fromDate(
+        DateTime(now.year, now.month, now.day),
+      );
+      final Timestamp endOfDay = Timestamp.fromDate(
+        DateTime(now.year, now.month, now.day, 23, 59, 59, 999),
+      );
 
       // Get branch ID from context
       final branchId = BranchContext().branchId;
@@ -175,47 +195,97 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
 
       if (routesSnap.docs.isEmpty) {
         print('⚠️ No routes found for branch $branchId');
-        updatedRoutes.add({
-          'id': 'default',
-          'name': 'Default Route',
-          'shopCount': 0,
+        setState(() {
+          allRoutes = [
+            {
+              'id': 'default',
+              'name': 'Default Route',
+              'shopCount': 0,
+              'todayCollection': 0.0,
+              'isCollectionLoading': false,
+            },
+          ];
+          totalPaidTodayAmount = 0.0;
+          isRoutesLoading = false;
+          isTodayCollectionLoading = false;
         });
       } else {
-        for (var routeDoc in routesSnap.docs) {
-          int shopCount = 0;
-          // Count shops in this route
-          final shopsSnap =
-              await firestore
-                  .collection('branches')
-                  .doc(branchId)
-                  .collection('routes')
-                  .doc(routeDoc.id)
-                  .collection('shops')
-                  .get();
-          shopCount = shopsSnap.docs.length;
+        final updatedRoutes =
+            routesSnap.docs.map((routeDoc) {
+              return <String, dynamic>{
+                'id': routeDoc.id,
+                'name': routeDoc.data()['name'] ?? routeDoc.id,
+                'shopCount': 0,
+                'order': routeDoc.data()['order'] ?? 0,
+                'todayCollection': 0.0,
+                'isCollectionLoading': true,
+              };
+            }).toList();
 
-          updatedRoutes.add({
-            'id': routeDoc.id,
-            'name': routeDoc.data()['name'] ?? routeDoc.id,
-            'shopCount': shopCount,
-            'order': routeDoc.data()['order'] ?? 0,
+        if (mounted) {
+          setState(() {
+            allRoutes = updatedRoutes;
+            totalPaidTodayAmount = 0.0;
+            isRoutesLoading = false;
+            isTodayCollectionLoading = true;
           });
+        }
 
-          print('✅ Loaded route: ${routeDoc.id} with $shopCount shops');
+        final routeCollectionFutures =
+            routesSnap.docs.map((routeDoc) async {
+              final shopsSnap =
+                  await firestore
+                      .collection('branches')
+                      .doc(branchId)
+                      .collection('routes')
+                      .doc(routeDoc.id)
+                      .collection('shops')
+                      .get();
+
+              final routeTodayCollection = await _sumTodayCollectionForShops(
+                shopsSnap.docs,
+                startOfDay,
+                endOfDay,
+              );
+
+              _updateRouteCollection(
+                routeId: routeDoc.id,
+                shopCount: shopsSnap.docs.length,
+                todayCollection: routeTodayCollection,
+                isLoading: false,
+              );
+
+              print(
+                '✅ Loaded route: ${routeDoc.id} with ${shopsSnap.docs.length} shops, today collection: Rs $routeTodayCollection',
+              );
+            }).toList();
+
+        await Future.wait(routeCollectionFutures);
+
+        if (mounted) {
+          setState(() => isTodayCollectionLoading = false);
         }
       }
-
-      setState(() {
-        allRoutes = updatedRoutes;
-      });
     } catch (e) {
       print('❌ Error loading routes: $e');
       // On error, fallback to empty list
-      setState(() {
-        allRoutes = [];
-      });
+      if (mounted) {
+        setState(() {
+          allRoutes = [];
+          totalPaidTodayAmount = 0.0;
+        });
+      }
     } finally {
-      if (mounted) setState(() => isRoutesLoading = false);
+      if (mounted) {
+        setState(() {
+          if (isRoutesLoading) {
+            isRoutesLoading = false;
+          }
+          if (allRoutes.isEmpty) {
+            isTodayCollectionLoading = false;
+          }
+        });
+      }
     }
   }
 
@@ -1319,18 +1389,16 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
   }
 
   Widget _buildTargetCard() {
-    final progress = totalPaidThisWeekAmount / targetCollectAmount;
-
     return Container(
       margin: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: AppColors.lightSurface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.warningDark.withOpacity(0.3)),
+        border: Border.all(color: AppColors.accentTeal.withOpacity(0.3)),
         boxShadow: [
           BoxShadow(
-            color: AppColors.warningDark.withOpacity(0.15),
+            color: AppColors.accentTeal.withOpacity(0.15),
             blurRadius: 15,
             offset: const Offset(0, -2),
           ),
@@ -1344,12 +1412,12 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppColors.warningDark.withOpacity(0.15),
+                  color: AppColors.accentTeal.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: const Icon(
-                  Icons.star_rounded,
-                  color: AppColors.warningDark,
+                  Icons.payments_rounded,
+                  color: AppColors.accentTeal,
                   size: 26,
                 ),
               ),
@@ -1359,7 +1427,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Daily Target',
+                      "Today's Collection (Route-wise)",
                       style: GoogleFonts.poppins(
                         fontSize: 14,
                         color: AppColors.lightTextSecondary,
@@ -1368,50 +1436,93 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Rs. $targetCollectAmount',
+                      'Rs. ${totalPaidTodayAmount.toStringAsFixed(2)}',
                       style: GoogleFonts.poppins(
                         fontSize: 22,
                         fontWeight: FontWeight.w700,
-                        color: AppColors.warningDark,
+                        color: AppColors.accentTealDark,
                       ),
                     ),
                   ],
                 ),
               ),
-              // Container(
-              //   padding:
-              //       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              //   decoration: BoxDecoration(
-              //     color: progress >= 1
-              //         ? AppColors.successDark.withOpacity(0.15)
-              //         : AppColors.accentBlueDark.withOpacity(0.15),
-              //     borderRadius: BorderRadius.circular(20),
-              //   ),
-              //   child: Text(
-              //     '${(progress * 100)}%',
-              //     style: GoogleFonts.poppins(
-              //       fontSize: 14,
-              //       fontWeight: FontWeight.w700,
-              //       color: progress >= 1
-              //           ? AppColors.successDark
-              //           : AppColors.accentBlueDark,
-              //     ),
-              //   ),
-              // ),
             ],
           ),
           const SizedBox(height: 16),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: LinearProgressIndicator(
-              value: progress.clamp(0.0, 1.0),
-              backgroundColor: AppColors.lightCardBorder,
-              valueColor: AlwaysStoppedAnimation<Color>(
-                progress >= 1 ? AppColors.successDark : AppColors.warningDark,
+          if (allRoutes.isEmpty)
+            Text(
+              'No routes available for today.',
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                color: AppColors.lightTextSecondary,
               ),
-              minHeight: 8,
+            )
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children:
+                    allRoutes.map((route) {
+                      final routeName = (route['name'] ?? 'Route').toString();
+                      final amount = _toDouble(route['todayCollection']);
+                      final isRouteLoading =
+                          route['isCollectionLoading'] == true;
+                      return Container(
+                        margin: const EdgeInsets.only(right: 10),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.lightBackground,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppColors.lightCardBorder),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '$routeName: ',
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                color: AppColors.lightTextPrimary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (isRouteLoading)
+                              const SizedBox(
+                                width: 12,
+                                height: 12,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            else
+                              Text(
+                                'Rs. ${amount.toStringAsFixed(2)}',
+                                style: GoogleFonts.poppins(
+                                  fontSize: 12,
+                                  color: AppColors.lightTextPrimary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+              ),
             ),
-          ),
+          if (isTodayCollectionLoading)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                'Calculating remaining routes...',
+                style: GoogleFonts.poppins(
+                  fontSize: 11,
+                  color: AppColors.lightTextSecondary,
+                ),
+              ),
+            ),
         ],
       ),
     );
