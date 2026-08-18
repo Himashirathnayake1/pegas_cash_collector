@@ -8,6 +8,7 @@ import 'package:pegas_cashcollector/screens/stocklist.dart';
 import 'package:pegas_cashcollector/screens/termsandconditions.dart';
 import 'package:pegas_cashcollector/screens/achievements_screen.dart';
 import 'package:pegas_cashcollector/screens/route_shops_screen.dart';
+import 'package:pegas_cashcollector/screens/route_balance_in_hand_screen.dart';
 import 'package:pegas_cashcollector/screens/daily_payment_shops_screen.dart';
 import 'package:pegas_cashcollector/screens/salary_screen.dart';
 import 'package:flutter/material.dart';
@@ -20,6 +21,17 @@ import '../services/mock_data_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/app_theme.dart';
 import '../services/branch_context.dart';
+
+bool routePasswordMatches(String? storedPassword, String? enteredPassword) {
+  final normalizedStored = (storedPassword ?? '').trim();
+  final normalizedEntered = (enteredPassword ?? '').trim();
+
+  if (normalizedStored.isEmpty) {
+    return true;
+  }
+
+  return normalizedStored == normalizedEntered;
+}
 
 class RoutePage extends StatefulWidget {
   final String selectedArea;
@@ -295,6 +307,152 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
     final minutes = twoDigits(duration.inMinutes.remainder(60));
     final seconds = twoDigits(duration.inSeconds.remainder(60));
     return "$hours:$minutes:$seconds";
+  }
+
+  Future<String?> _promptForRoutePassword(String routeName) async {
+    final controller = TextEditingController();
+
+    final password = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF0D2137),
+          title: Text(
+            'Route password',
+            style: GoogleFonts.poppins(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Enter the password for $routeName',
+                style: GoogleFonts.poppins(
+                  color: AppColors.lightTextSecondary,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                obscureText: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  labelStyle: GoogleFonts.poppins(color: Colors.white70),
+                  filled: true,
+                  fillColor: const Color(0xFF102A43),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFF1A3A5C)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: AppColors.accentTeal),
+                  ),
+                ),
+                onSubmitted: (_) => Navigator.of(dialogContext).pop(controller.text),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(null),
+              child: Text(
+                'Cancel',
+                style: GoogleFonts.poppins(color: Colors.white70),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accentTeal,
+                foregroundColor: Colors.black,
+              ),
+              child: Text(
+                'Open',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    return password;
+  }
+
+  void _navigateToRoute(Map<String, dynamic> route) {
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder:
+            (context) => RouteShopsScreen(
+              routeId: route['id'],
+              routeName: route['name'],
+            ),
+      ),
+    );
+  }
+
+  Future<void> _openRouteWithPasswordCheck(Map<String, dynamic> route) async {
+    final branchId = BranchContext().branchId;
+    if (branchId == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Branch context is not available.')),
+      );
+      return;
+    }
+
+    try {
+      final routeDoc =
+          await FirebaseFirestore.instance
+              .collection('branches')
+              .doc(branchId)
+              .collection('routes')
+              .doc(route['id'])
+              .get();
+
+      final storedPassword = routeDoc.data()?['password'];
+      final normalizedPassword = storedPassword?.toString().trim() ?? '';
+
+      if (normalizedPassword.isEmpty) {
+        _navigateToRoute(route);
+        return;
+      }
+
+      final enteredPassword = await _promptForRoutePassword(
+        route['name'] ?? route['id'],
+      );
+
+      if (enteredPassword == null) {
+        return;
+      }
+
+      if (!routePasswordMatches(normalizedPassword, enteredPassword)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Incorrect route password.')),
+        );
+        return;
+      }
+
+      _navigateToRoute(route);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to verify route password: $e')),
+      );
+    }
   }
 
   Future<void> _persistRouteOrder() async {
@@ -582,15 +740,33 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                         paddingV: menuItemPaddingV,
                       ),
                       SizedBox(height: isSmallScreen ? 4 : 6),
+                      // _buildDrawerMenuItem(
+                      //   icon: Icons.account_balance_wallet_rounded,
+                      //   title: 'Balance in Hand',
+                      //   onTap: () {
+                      //     Navigator.pop(context);
+                      //     Navigator.push(
+                      //       context,
+                      //       MaterialPageRoute(
+                      //         builder: (_) => const BalanceInHandScreen(),
+                      //       ),
+                      //     );
+                      //   },
+                      //   fontSize: menuItemFontSize,
+                      //   iconSize: menuIconSize,
+                      //   paddingH: menuItemPaddingH,
+                      //   paddingV: menuItemPaddingV,
+                      // ),
+                      // SizedBox(height: isSmallScreen ? 4 : 6),
                       _buildDrawerMenuItem(
-                        icon: Icons.account_balance_wallet_rounded,
-                        title: 'Balance in Hand',
+                        icon: Icons.route_rounded,
+                        title: 'Route Balance in Hand',
                         onTap: () {
                           Navigator.pop(context);
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => const BalanceInHandScreen(),
+                              builder: (_) => const RouteBalanceInHandScreen(),
                             ),
                           );
                         },
@@ -992,17 +1168,8 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder:
-                      (context) => RouteShopsScreen(
-                        routeId: route['id'],
-                        routeName: route['name'],
-                      ),
-                ),
-              );
+            onTap: () async {
+              await _openRouteWithPasswordCheck(route);
             },
             borderRadius: BorderRadius.circular(20),
             child: Container(

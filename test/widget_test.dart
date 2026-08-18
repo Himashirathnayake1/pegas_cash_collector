@@ -5,26 +5,29 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:pegas_cashcollector/main.dart';
+import 'package:pegas_cashcollector/screens/home_screen.dart';
+import 'package:pegas_cashcollector/screens/route_balance_in_hand_screen.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  test('route password matches trimmed values', () {
+    expect(routePasswordMatches('abc123', 'abc123'), isTrue);
+    expect(routePasswordMatches('abc123', ' abc123 '), isTrue);
+    expect(routePasswordMatches('abc123', 'abc124'), isFalse);
+  });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  test('blank route password bypasses the gate', () {
+    expect(routePasswordMatches('', 'anything'), isTrue);
+    expect(routePasswordMatches(null, 'anything'), isTrue);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  test('route balance totals sum all shop totals for a route', () {
+    final total = calculateRouteBalanceFromShops([
+      {'totalPaid': 250.0},
+      {'totalPaid': '100'},
+      {'totalPaid': 50},
+    ]);
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(total, 400.0);
   });
 }
