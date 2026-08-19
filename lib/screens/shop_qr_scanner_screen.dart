@@ -8,7 +8,9 @@ import '../utils/app_theme.dart';
 import 'balance_screen.dart';
 
 class ShopQrScannerScreen extends StatefulWidget {
-  const ShopQrScannerScreen({super.key});
+  final String? routeId;
+
+  const ShopQrScannerScreen({super.key, this.routeId});
 
   @override
   State<ShopQrScannerScreen> createState() => _ShopQrScannerScreenState();
@@ -43,6 +45,25 @@ class _ShopQrScannerScreenState extends State<ShopQrScannerScreen> {
     }
 
     final firestore = FirebaseFirestore.instance;
+
+    if (widget.routeId != null && widget.routeId!.isNotEmpty) {
+      final routeRef = firestore
+          .collection('branches')
+          .doc(branchId)
+          .collection('routes')
+          .doc(widget.routeId);
+      final shopDoc = await routeRef.collection('shops').doc(shopId).get();
+
+      if (!shopDoc.exists) return null;
+
+      return {
+        'routeId': routeRef.id,
+        'routeName': routeRef.id,
+        'shopId': shopDoc.id,
+        'shopData': shopDoc.data() ?? <String, dynamic>{},
+      };
+    }
+
     final routesSnapshot =
         await firestore
             .collection('branches')

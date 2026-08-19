@@ -1,14 +1,12 @@
 import 'dart:ui';
 import 'dart:async';
 import 'package:pegas_cashcollector/screens/addReceipts.dart';
-import 'package:pegas_cashcollector/screens/balance_in_hand_screen.dart';
 import 'package:pegas_cashcollector/screens/balance_screen.dart';
 import 'package:pegas_cashcollector/screens/codeEntryScreen.dart';
 import 'package:pegas_cashcollector/screens/stocklist.dart';
 import 'package:pegas_cashcollector/screens/termsandconditions.dart';
 import 'package:pegas_cashcollector/screens/achievements_screen.dart';
 import 'package:pegas_cashcollector/screens/route_shops_screen.dart';
-import 'package:pegas_cashcollector/screens/route_balance_in_hand_screen.dart';
 import 'package:pegas_cashcollector/screens/daily_payment_shops_screen.dart';
 import 'package:pegas_cashcollector/screens/salary_screen.dart';
 import 'package:flutter/material.dart';
@@ -16,7 +14,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shimmer/shimmer.dart';
 import 'low_level_shops_screen.dart';
-import 'shop_qr_scanner_screen.dart';
 import '../services/mock_data_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/app_theme.dart';
@@ -48,9 +45,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
   final String googleFormUrl =
       "https://docs.google.com/forms/d/e/1FAIpQLSfZOSjqEHGOQuRZeCr6XF7JWrqLbFronAMdiHJ28d853Nau8g/viewform?usp=header";
 
-  bool isTodayCollectionLoading = false;
   bool isUploading = false;
-  double totalPaidTodayAmount = 0;
 
   // Routes list variables
   List<Map<String, dynamic>> allRoutes = [];
@@ -102,75 +97,6 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
     });
   }
 
-  double _toDouble(dynamic value) {
-    if (value == null) return 0.0;
-    if (value is num) return value.toDouble();
-    return double.tryParse(value.toString()) ?? 0.0;
-  }
-
-  Future<double> _sumTodayCollectionForShops(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> shopDocs,
-    Timestamp startOfDay,
-    Timestamp endOfDay,
-  ) async {
-    double total = 0.0;
-    const int batchSize = 10;
-
-    for (int i = 0; i < shopDocs.length; i += batchSize) {
-      final batch = shopDocs.skip(i).take(batchSize);
-      final snapshots = await Future.wait(
-        batch.map((shopDoc) {
-          return shopDoc.reference
-              .collection('transactions')
-              .where('timestamp', isGreaterThanOrEqualTo: startOfDay)
-              .where('timestamp', isLessThanOrEqualTo: endOfDay)
-              .get();
-        }),
-      );
-
-      for (final txSnapshot in snapshots) {
-        for (final txDoc in txSnapshot.docs) {
-          final txData = txDoc.data();
-          final typeRaw = txData['type'];
-          final normalizedType = typeRaw?.toString().toLowerCase();
-          final isCollectionType =
-              normalizedType == null ||
-              normalizedType == 'paid' ||
-              normalizedType == 'partialpaid';
-
-          if (!isCollectionType) continue;
-          total += _toDouble(txData['amount']);
-        }
-      }
-    }
-
-    return total;
-  }
-
-  void _updateRouteCollection({
-    required String routeId,
-    required int shopCount,
-    required double todayCollection,
-    required bool isLoading,
-  }) {
-    if (!mounted) return;
-
-    setState(() {
-      final routeIndex = allRoutes.indexWhere(
-        (route) => route['id'] == routeId,
-      );
-      if (routeIndex == -1) return;
-
-      allRoutes[routeIndex]['shopCount'] = shopCount;
-      allRoutes[routeIndex]['todayCollection'] = todayCollection;
-      allRoutes[routeIndex]['isCollectionLoading'] = isLoading;
-
-      totalPaidTodayAmount = allRoutes.fold<double>(0.0, (sum, route) {
-        return sum + _toDouble(route['todayCollection']);
-      });
-    });
-  }
-
   Future<void> _loadRoutes() async {
     setState(() => isRoutesLoading = true);
 
@@ -178,14 +104,6 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
       await Future.delayed(const Duration(milliseconds: 300));
 
       final firestore = FirebaseFirestore.instance;
-      final DateTime now = DateTime.now();
-      final Timestamp startOfDay = Timestamp.fromDate(
-        DateTime(now.year, now.month, now.day),
-      );
-      final Timestamp endOfDay = Timestamp.fromDate(
-        DateTime(now.year, now.month, now.day, 23, 59, 59, 999),
-      );
-
       // Get branch ID from context
       final branchId = BranchContext().branchId;
       if (branchId == null) {
@@ -209,17 +127,9 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
         print('⚠️ No routes found for branch $branchId');
         setState(() {
           allRoutes = [
-            {
-              'id': 'default',
-              'name': 'Default Route',
-              'shopCount': 0,
-              'todayCollection': 0.0,
-              'isCollectionLoading': false,
-            },
+            {'id': 'default', 'name': 'Default Route', 'shopCount': 0},
           ];
-          totalPaidTodayAmount = 0.0;
           isRoutesLoading = false;
-          isTodayCollectionLoading = false;
         });
       } else {
         final updatedRoutes =
@@ -229,53 +139,14 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                 'name': routeDoc.data()['name'] ?? routeDoc.id,
                 'shopCount': 0,
                 'order': routeDoc.data()['order'] ?? 0,
-                'todayCollection': 0.0,
-                'isCollectionLoading': true,
               };
             }).toList();
 
         if (mounted) {
           setState(() {
             allRoutes = updatedRoutes;
-            totalPaidTodayAmount = 0.0;
             isRoutesLoading = false;
-            isTodayCollectionLoading = true;
           });
-        }
-
-        final routeCollectionFutures =
-            routesSnap.docs.map((routeDoc) async {
-              final shopsSnap =
-                  await firestore
-                      .collection('branches')
-                      .doc(branchId)
-                      .collection('routes')
-                      .doc(routeDoc.id)
-                      .collection('shops')
-                      .get();
-
-              final routeTodayCollection = await _sumTodayCollectionForShops(
-                shopsSnap.docs,
-                startOfDay,
-                endOfDay,
-              );
-
-              _updateRouteCollection(
-                routeId: routeDoc.id,
-                shopCount: shopsSnap.docs.length,
-                todayCollection: routeTodayCollection,
-                isLoading: false,
-              );
-
-              print(
-                '✅ Loaded route: ${routeDoc.id} with ${shopsSnap.docs.length} shops, today collection: Rs $routeTodayCollection',
-              );
-            }).toList();
-
-        await Future.wait(routeCollectionFutures);
-
-        if (mounted) {
-          setState(() => isTodayCollectionLoading = false);
         }
       }
     } catch (e) {
@@ -284,7 +155,6 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
       if (mounted) {
         setState(() {
           allRoutes = [];
-          totalPaidTodayAmount = 0.0;
         });
       }
     } finally {
@@ -292,9 +162,6 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
         setState(() {
           if (isRoutesLoading) {
             isRoutesLoading = false;
-          }
-          if (allRoutes.isEmpty) {
-            isTodayCollectionLoading = false;
           }
         });
       }
@@ -357,7 +224,8 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                     borderSide: BorderSide(color: AppColors.accentTeal),
                   ),
                 ),
-                onSubmitted: (_) => Navigator.of(dialogContext).pop(controller.text),
+                onSubmitted:
+                    (_) => Navigator.of(dialogContext).pop(controller.text),
               ),
             ],
           ),
@@ -446,6 +314,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
         return;
       }
 
+
       _navigateToRoute(route);
     } catch (e) {
       if (!mounted) return;
@@ -518,7 +387,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                           ),
                 ),
                 // Fixed bottom target card
-                _buildTargetCard(),
+                // _buildTargetCard(),
               ],
             ),
           ),
@@ -576,25 +445,6 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                   ),
                 ),
               ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Scan shop QR',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const ShopQrScannerScreen(),
-                ),
-              );
-            },
-            icon: const Icon(
-              Icons.qr_code_scanner_rounded,
-              color: AppColors.lightTextPrimary,
-            ),
-            style: IconButton.styleFrom(
-              backgroundColor: AppColors.lightCardBorder,
-              padding: const EdgeInsets.all(12),
             ),
           ),
           IconButton(
@@ -739,7 +589,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                         paddingH: menuItemPaddingH,
                         paddingV: menuItemPaddingV,
                       ),
-                      SizedBox(height: isSmallScreen ? 4 : 6),
+                      //SizedBox(height: isSmallScreen ? 4 : 6),
                       // _buildDrawerMenuItem(
                       //   icon: Icons.account_balance_wallet_rounded,
                       //   title: 'Balance in Hand',
@@ -757,25 +607,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                       //   paddingH: menuItemPaddingH,
                       //   paddingV: menuItemPaddingV,
                       // ),
-                      // SizedBox(height: isSmallScreen ? 4 : 6),
-                      _buildDrawerMenuItem(
-                        icon: Icons.route_rounded,
-                        title: 'Route Balance in Hand',
-                        onTap: () {
-                          Navigator.pop(context);
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const RouteBalanceInHandScreen(),
-                            ),
-                          );
-                        },
-                        fontSize: menuItemFontSize,
-                        iconSize: menuIconSize,
-                        paddingH: menuItemPaddingH,
-                        paddingV: menuItemPaddingV,
-                      ),
-
+                    // SizedBox(height: isSmallScreen ? 4 : 6),
                       _buildDrawerMenuItem(
                         icon: Icons.inventory_2_rounded,
                         title: 'Stock List',
@@ -793,7 +625,7 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                         paddingH: menuItemPaddingH,
                         paddingV: menuItemPaddingV,
                       ),
-                      SizedBox(height: isSmallScreen ? 4 : 6),
+                    //  SizedBox(height: isSmallScreen ? 4 : 6),
                       _buildDrawerMenuItem(
                         icon: Icons.receipt_long_rounded,
                         title: 'Add Receipt',
@@ -831,58 +663,58 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                         paddingH: menuItemPaddingH,
                         paddingV: menuItemPaddingV,
                       ),
-                      _buildDrawerMenuItem(
-                        icon: Icons.calendar_today_rounded,
-                        title: 'Daily Payment Shops',
-                        onTap: () {
-                          Navigator.pop(context);
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const DailyPaymentShopsScreen(),
-                            ),
-                          );
-                        },
-                        fontSize: menuItemFontSize,
-                        iconSize: menuIconSize,
-                        paddingH: menuItemPaddingH,
-                        paddingV: menuItemPaddingV,
-                      ),
-                      _buildDrawerMenuItem(
-                        icon: Icons.emoji_events_rounded,
-                        title: 'Achievements',
-                        onTap: () {
-                          Navigator.pop(context);
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const AchievementsScreen(),
-                            ),
-                          );
-                        },
-                        fontSize: menuItemFontSize,
-                        iconSize: menuIconSize,
-                        paddingH: menuItemPaddingH,
-                        paddingV: menuItemPaddingV,
-                      ),
-                      SizedBox(height: isSmallScreen ? 4 : 6),
-                      _buildDrawerMenuItem(
-                        icon: Icons.payments_rounded,
-                        title: 'My Salary',
-                        onTap: () {
-                          Navigator.pop(context);
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const SalaryScreen(),
-                            ),
-                          );
-                        },
-                        fontSize: menuItemFontSize,
-                        iconSize: menuIconSize,
-                        paddingH: menuItemPaddingH,
-                        paddingV: menuItemPaddingV,
-                      ),
+                      // _buildDrawerMenuItem(
+                      //   icon: Icons.calendar_today_rounded,
+                      //   title: 'Daily Payment Shops',
+                      //   onTap: () {
+                      //     Navigator.pop(context);
+                      //     Navigator.push(
+                      //       context,
+                      //       MaterialPageRoute(
+                      //         builder: (_) => const DailyPaymentShopsScreen(),
+                      //       ),
+                      //     );
+                      //   },
+                      //   fontSize: menuItemFontSize,
+                      //   iconSize: menuIconSize,
+                      //   paddingH: menuItemPaddingH,
+                      //   paddingV: menuItemPaddingV,
+                      // ),
+                      // _buildDrawerMenuItem(
+                      //   icon: Icons.emoji_events_rounded,
+                      //   title: 'Achievements',
+                      //   onTap: () {
+                      //     Navigator.pop(context);
+                      //     Navigator.push(
+                      //       context,
+                      //       MaterialPageRoute(
+                      //         builder: (_) => const AchievementsScreen(),
+                      //       ),
+                      //     );
+                      //   },
+                      //   fontSize: menuItemFontSize,
+                      //   iconSize: menuIconSize,
+                      //   paddingH: menuItemPaddingH,
+                      //   paddingV: menuItemPaddingV,
+                      // ),
+                      // SizedBox(height: isSmallScreen ? 4 : 6),
+                      // _buildDrawerMenuItem(
+                      //   icon: Icons.payments_rounded,
+                      //   title: 'My Salary',
+                      //   onTap: () {
+                      //     Navigator.pop(context);
+                      //     Navigator.push(
+                      //       context,
+                      //       MaterialPageRoute(
+                      //         builder: (_) => const SalaryScreen(),
+                      //       ),
+                      //     );
+                      //   },
+                      //   fontSize: menuItemFontSize,
+                      //   iconSize: menuIconSize,
+                      //   paddingH: menuItemPaddingH,
+                      //   paddingV: menuItemPaddingV,
+                      // ),
                       SizedBox(height: isSmallScreen ? 4 : 6),
                       _buildDrawerMenuItem(
                         icon: Icons.description_rounded,
@@ -1222,14 +1054,14 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                             color: Colors.white,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${route['shopCount']} shops',
-                          style: GoogleFonts.poppins(
-                            fontSize: 12,
-                            color: AppColors.lightTextSecondary,
-                          ),
-                        ),
+                      //  const SizedBox(height: 4),
+                        // Text(
+                        //   '${route['shopCount']} shops',
+                        //   style: GoogleFonts.poppins(
+                        //     fontSize: 12,
+                        //     color: AppColors.lightTextSecondary,
+                        //   ),
+                        // ),
                       ],
                     ),
                   ),
@@ -1555,216 +1387,217 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildTargetCard() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.lightSurface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.accentTeal.withOpacity(0.3)),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.accentTeal.withOpacity(0.15),
-            blurRadius: 15,
-            offset: const Offset(0, -2),
+  // Widget _buildTargetCard() {
+  //   return Container(
+  //     margin: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+  //     padding: const EdgeInsets.all(20),
+  //     decoration: BoxDecoration(
+  //       color: AppColors.lightSurface,
+  //       borderRadius: BorderRadius.circular(20),
+  //       border: Border.all(color: AppColors.accentTeal.withOpacity(0.3)),
+  //       boxShadow: [
+  //         BoxShadow(
+  //           color: AppColors.accentTeal.withOpacity(0.15),
+  //           blurRadius: 15,
+  //           offset: const Offset(0, -2),
+  //         ),
+  //       ],
+  //     ),
+  //     child: Column(
+  //       mainAxisSize: MainAxisSize.min,
+  //       children: [
+  //         Row(
+  //           children: [
+  //             Container(
+  //               padding: const EdgeInsets.all(12),
+  //               decoration: BoxDecoration(
+  //                 color: AppColors.accentTeal.withOpacity(0.15),
+  //                 borderRadius: BorderRadius.circular(14),
+  //               ),
+  //               child: const Icon(
+  //                 Icons.payments_rounded,
+  //                 color: AppColors.accentTeal,
+  //                 size: 26,
+  //               ),
+  //             ),
+  //             const SizedBox(width: 14),
+  //             Expanded(
+  //               child: Column(
+  //                 crossAxisAlignment: CrossAxisAlignment.start,
+  //                 children: [
+  //                   Text(
+  //                     "Today's Collection (Route-wise)",
+  //                     style: GoogleFonts.poppins(
+  //                       fontSize: 14,
+  //                       color: AppColors.lightTextSecondary,
+  //                       fontWeight: FontWeight.w500,
+  //                     ),
+  //                   ),
+  //                   const SizedBox(height: 4),
+  //                   Text(
+  //                     'Rs. ${totalPaidTodayAmount.toStringAsFixed(2)}',
+  //                     style: GoogleFonts.poppins(
+  //                       fontSize: 22,
+  //                       fontWeight: FontWeight.w700,
+  //                       color: AppColors.accentTealDark,
+  //                     ),
+  //                   ),
+  //                 ],
+  //               ),
+  //             ),
+  //           ],
+  //         ),
+  //         const SizedBox(height: 16),
+  //         if (allRoutes.isEmpty)
+  //           Text(
+  //             'No routes available for today.',
+  //             style: GoogleFonts.poppins(
+  //               fontSize: 13,
+  //               color: AppColors.lightTextSecondary,
+  //             ),
+  //           )
+  //         else
+  //           SingleChildScrollView(
+  //             scrollDirection: Axis.horizontal,
+  //             child: Row(
+  //               children:
+  //                   allRoutes.map((route) {
+  //                     final routeName = (route['name'] ?? 'Route').toString();
+  //                     final amount = _toDouble(route['todayCollection']);
+  //                     final isRouteLoading =
+  //                         route['isCollectionLoading'] == true;
+  //                     return Container(
+  //                       margin: const EdgeInsets.only(right: 10),
+  //                       padding: const EdgeInsets.symmetric(
+  //                         horizontal: 12,
+  //                         vertical: 8,
+  //                       ),
+  //                       decoration: BoxDecoration(
+  //                         color: AppColors.lightBackground,
+  //                         borderRadius: BorderRadius.circular(10),
+  //                         border: Border.all(color: AppColors.lightCardBorder),
+  //                       ),
+  //                       child: Row(
+  //                         mainAxisSize: MainAxisSize.min,
+  //                         children: [
+  //                           Text(
+  //                             '$routeName: ',
+  //                             style: GoogleFonts.poppins(
+  //                               fontSize: 12,
+  //                               color: AppColors.lightTextPrimary,
+  //                               fontWeight: FontWeight.w600,
+  //                             ),
+  //                           ),
+  //                           if (isRouteLoading)
+  //                             const SizedBox(
+  //                               width: 12,
+  //                               height: 12,
+  //                               child: CircularProgressIndicator(
+  //                                 strokeWidth: 2,
+  //                               ),
+  //                             )
+  //                           else
+  //                             Text(
+  //                               'Rs. ${amount.toStringAsFixed(2)}',
+  //                               style: GoogleFonts.poppins(
+  //                                 fontSize: 12,
+  //                                 color: AppColors.lightTextPrimary,
+  //                                 fontWeight: FontWeight.w600,
+  //                               ),
+  //                             ),
+  //                         ],
+  //                       ),
+  //                     );
+  //                   }).toList(),
+  //             ),
+  //           ),
+  //         if (isTodayCollectionLoading)
+  //           Padding(
+  //             padding: const EdgeInsets.only(top: 10),
+  //             child: Text(
+  //               'Calculating remaining routes...',
+  //               style: GoogleFonts.poppins(
+  //                 fontSize: 11,
+  //                 color: AppColors.lightTextSecondary,
+  //               ),
+  //             ),
+  //           ),
+  //       ],
+  //     ),
+  //   );
+  // }
+  //}
+
+  Widget paidShopsSummaryCard() {
+    final mockService = MockDataService();
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.lightSurface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.successDark.withOpacity(0.3)),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  "Today's Paid",
+                  style: GoogleFonts.poppins(
+                    fontSize: 12,
+                    color: AppColors.lightTextSecondary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  "${mockService.todayPaidShopsCount}",
+                  style: GoogleFonts.poppins(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.successDark,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.accentTeal.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.payments_rounded,
-                  color: AppColors.accentTeal,
-                  size: 26,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Today's Collection (Route-wise)",
-                      style: GoogleFonts.poppins(
-                        fontSize: 14,
-                        color: AppColors.lightTextSecondary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Rs. ${totalPaidTodayAmount.toStringAsFixed(2)}',
-                      style: GoogleFonts.poppins(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.accentTealDark,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          if (allRoutes.isEmpty)
-            Text(
-              'No routes available for today.',
-              style: GoogleFonts.poppins(
-                fontSize: 13,
-                color: AppColors.lightTextSecondary,
-              ),
-            )
-          else
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children:
-                    allRoutes.map((route) {
-                      final routeName = (route['name'] ?? 'Route').toString();
-                      final amount = _toDouble(route['todayCollection']);
-                      final isRouteLoading =
-                          route['isCollectionLoading'] == true;
-                      return Container(
-                        margin: const EdgeInsets.only(right: 10),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.lightBackground,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: AppColors.lightCardBorder),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              '$routeName: ',
-                              style: GoogleFonts.poppins(
-                                fontSize: 12,
-                                color: AppColors.lightTextPrimary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            if (isRouteLoading)
-                              const SizedBox(
-                                width: 12,
-                                height: 12,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            else
-                              Text(
-                                'Rs. ${amount.toStringAsFixed(2)}',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 12,
-                                  color: AppColors.lightTextPrimary,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                          ],
-                        ),
-                      );
-                    }).toList(),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.lightSurface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: AppColors.accentBlueDark.withOpacity(0.3),
               ),
             ),
-          if (isTodayCollectionLoading)
-            Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Text(
-                'Calculating remaining routes...',
-                style: GoogleFonts.poppins(
-                  fontSize: 11,
-                  color: AppColors.lightTextSecondary,
+            child: Column(
+              children: [
+                Text(
+                  "Month's Paid",
+                  style: GoogleFonts.poppins(
+                    fontSize: 12,
+                    color: AppColors.lightTextSecondary,
+                  ),
                 ),
-              ),
+                const SizedBox(height: 4),
+                Text(
+                  "${mockService.monthPaidShopsCount}",
+                  style: GoogleFonts.poppins(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.accentBlueDark,
+                  ),
+                ),
+              ],
             ),
-        ],
-      ),
+          ),
+        ),
+      ],
     );
   }
-}
-
-Widget paidShopsSummaryCard() {
-  final mockService = MockDataService();
-
-  return Row(
-    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-    children: [
-      Expanded(
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.lightSurface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.successDark.withOpacity(0.3)),
-          ),
-          child: Column(
-            children: [
-              Text(
-                "Today's Paid",
-                style: GoogleFonts.poppins(
-                  fontSize: 12,
-                  color: AppColors.lightTextSecondary,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                "${mockService.todayPaidShopsCount}",
-                style: GoogleFonts.poppins(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.successDark,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      const SizedBox(width: 12),
-      Expanded(
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.lightSurface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: AppColors.accentBlueDark.withOpacity(0.3),
-            ),
-          ),
-          child: Column(
-            children: [
-              Text(
-                "Month's Paid",
-                style: GoogleFonts.poppins(
-                  fontSize: 12,
-                  color: AppColors.lightTextSecondary,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                "${mockService.monthPaidShopsCount}",
-                style: GoogleFonts.poppins(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.accentBlueDark,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ],
-  );
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:pegas_cashcollector/screens/balance_screen.dart';
 import 'package:pegas_cashcollector/screens/nearest_shops_map_screen.dart';
 import 'package:pegas_cashcollector/screens/osrm_optimized_route_map_screen.dart';
+import 'package:pegas_cashcollector/screens/shop_qr_scanner_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -462,6 +463,89 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value);
     return null;
+  }
+
+  Future<void> _showRouteBalancePopup() async {
+    final branchId = BranchContext().branchId;
+    if (branchId == null || branchId.isEmpty) {
+      _showFriendlySnackBar('Branch information is not available');
+      return;
+    }
+
+    try {
+      final routeRef = FirebaseFirestore.instance
+          .collection('branches')
+          .doc(branchId)
+          .collection('routes')
+          .doc(widget.routeId);
+      final shopsSnapshot = await routeRef.collection('shops').get();
+
+      final balance = shopsSnapshot.docs.fold<double>(0.0, (total, shopDoc) {
+        return total + (_toDouble(shopDoc.data()['totalPaid']) ?? 0.0);
+      });
+
+      await routeRef.set({
+        'routeBalanceInHand': balance,
+        'routeCollection': balance,
+        'cashCollection': balance,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.account_balance_wallet_rounded),
+                const SizedBox(width: 8),
+                Expanded(child: Text('${widget.routeName} Balance')),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Balance in hand',
+                  style: GoogleFonts.poppins(
+                    color: AppColors.lightTextSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Rs ${balance.toStringAsFixed(2)}',
+                  style: GoogleFonts.poppins(
+                    color: AppColors.accentBlueDark,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${shopsSnapshot.docs.length} shops',
+                  style: GoogleFonts.poppins(
+                    color: AppColors.lightTextSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (error) {
+      if (mounted) {
+        _showFriendlySnackBar('Could not load route balance: $error');
+      }
+    }
   }
 
   void _sortFilteredShopsByDistance() {
@@ -930,6 +1014,29 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Scan shop QR for this route',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ShopQrScannerScreen(routeId: widget.routeId),
+                ),
+              );
+            },
+            icon: const Icon(
+              Icons.qr_code_scanner_rounded,
+              color: AppColors.lightTextPrimary,
+            ),
+          ),
+          IconButton(
+            tooltip: 'View route balance in hand',
+            onPressed: _showRouteBalancePopup,
+            icon: const Icon(
+              Icons.account_balance_wallet_rounded,
+              color: AppColors.lightTextPrimary,
+            ),
+          ),
           // IconButton(
           //   tooltip: 'View OSRM optimized route map',
           //   onPressed: () {
