@@ -8,6 +8,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import '../utils/app_theme.dart';
 import '../services/branch_context.dart';
+import 'shop_qr_scanner_screen.dart';
 
 class BalanceScreen extends StatefulWidget {
   final String shopName;
@@ -1126,9 +1127,7 @@ class _BalanceScreenState extends State<BalanceScreen>
                       decoration: BoxDecoration(
                         color: AppColors.lightBackground,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: AppColors.lightCardBorder,
-                        ),
+                        border: Border.all(color: AppColors.lightCardBorder),
                       ),
                       child: DropdownButtonHideUnderline(
                         child: DropdownButtonFormField<String>(
@@ -1148,20 +1147,24 @@ class _BalanceScreenState extends State<BalanceScreen>
                             color: AppColors.lightTextPrimary,
                           ),
                           value: selectedCollectionType,
-                          items: [
-                            'Daily',
-                            '2 Days',
-                            '3 Days',
-                            'Weekly',
-                            '0 - No Collect',
-                          ]
-                              .map(
-                                (type) => DropdownMenuItem(
-                                  value: type == '0 - Hidden' ? '0' : type.toLowerCase(),
-                                  child: Text(type),
-                                ),
-                              )
-                              .toList(),
+                          items:
+                              [
+                                    'Daily',
+                                    '2 Days',
+                                    '3 Days',
+                                    'Weekly',
+                                    '0 - No Collect',
+                                  ]
+                                  .map(
+                                    (type) => DropdownMenuItem(
+                                      value:
+                                          type == '0 - Hidden'
+                                              ? '0'
+                                              : type.toLowerCase(),
+                                      child: Text(type),
+                                    ),
+                                  )
+                                  .toList(),
                           onChanged: (value) {
                             setDialogState(() {
                               selectedCollectionType = value;
@@ -1209,9 +1212,9 @@ class _BalanceScreenState extends State<BalanceScreen>
                                   .collection('shops')
                                   .doc(widget.shopId);
 
-                              await shopRef.update(
-                                {'collectionType': selectedCollectionType},
-                              );
+                              await shopRef.update({
+                                'collectionType': selectedCollectionType,
+                              });
 
                               Navigator.pop(context);
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -1252,7 +1255,8 @@ class _BalanceScreenState extends State<BalanceScreen>
     String? selectedReason;
     String note = '';
     final bool isLowBalanceEligible = (balanceAmount ?? 0) < 2500;
-    bool isLocationVerified = isLowBalanceEligible; // Auto-verify if low balance eligible
+    bool isLocationVerified =
+        isLowBalanceEligible; // Auto-verify if low balance eligible
     bool isCheckingLocation = false;
     bool isLowBalanceSelected = false;
     double? currentDistance;
@@ -1377,7 +1381,9 @@ class _BalanceScreenState extends State<BalanceScreen>
                                   decoration: BoxDecoration(
                                     color:
                                         isLocationVerified
-                                            ? AppColors.success.withOpacity(0.15)
+                                            ? AppColors.success.withOpacity(
+                                              0.15,
+                                            )
                                             : locationError != null
                                             ? AppColors.errorDark.withOpacity(
                                               0.15,
@@ -1404,7 +1410,8 @@ class _BalanceScreenState extends State<BalanceScreen>
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         'Location Verification',
@@ -1502,12 +1509,15 @@ class _BalanceScreenState extends State<BalanceScreen>
                                                 });
                                               },
                                       style: ElevatedButton.styleFrom(
-                                        backgroundColor: AppColors.accentTealDark,
+                                        backgroundColor:
+                                            AppColors.accentTealDark,
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 12,
                                         ),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(8),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
                                         ),
                                       ),
                                       child:
@@ -1515,10 +1525,11 @@ class _BalanceScreenState extends State<BalanceScreen>
                                               ? const SizedBox(
                                                 width: 16,
                                                 height: 16,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                  color: Colors.white,
-                                                ),
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      color: Colors.white,
+                                                    ),
                                               )
                                               : Text(
                                                 'Verify',
@@ -1572,8 +1583,7 @@ class _BalanceScreenState extends State<BalanceScreen>
                                         'No business today 📉',
                                         'Owner refused to pay 💰',
                                         'Other ✏️',
-                                        if (isLowBalanceEligible)
-                                          'Low Balance',
+                                        if (isLowBalanceEligible) 'Low Balance',
                                       ]
                                       .map(
                                         (reason) => DropdownMenuItem(
@@ -1844,6 +1854,21 @@ class _BalanceScreenState extends State<BalanceScreen>
         );
       },
     );
+  }
+
+  Future<void> _scanShopBeforeFeedback() async {
+    final scannedShop = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder:
+            (_) => ShopQrScannerScreen(
+              routeId: widget.routeName,
+              expectedShopId: widget.shopId,
+            ),
+      ),
+    );
+
+    if (!mounted || scannedShop == null) return;
+    _showFeedbackDialog();
   }
 
   @override
@@ -2122,7 +2147,7 @@ class _BalanceScreenState extends State<BalanceScreen>
           SizedBox(
             width: double.infinity,
             child: OutlinedButton(
-              onPressed: _showFeedbackDialog,
+              onPressed: _scanShopBeforeFeedback,
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.warningDark,
                 padding: const EdgeInsets.symmetric(vertical: 14),

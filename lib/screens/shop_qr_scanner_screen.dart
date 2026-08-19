@@ -9,8 +9,9 @@ import 'balance_screen.dart';
 
 class ShopQrScannerScreen extends StatefulWidget {
   final String? routeId;
+  final String? expectedShopId;
 
-  const ShopQrScannerScreen({super.key, this.routeId});
+  const ShopQrScannerScreen({super.key, this.routeId, this.expectedShopId});
 
   @override
   State<ShopQrScannerScreen> createState() => _ShopQrScannerScreenState();
@@ -133,6 +134,22 @@ class _ShopQrScannerScreenState extends State<ShopQrScannerScreen> {
       if (result == null) {
         _showMessage('Shop not found for QR code: $code', isError: true);
         await _scannerController.start();
+        return;
+      }
+
+      if (widget.expectedShopId != null &&
+          widget.expectedShopId!.isNotEmpty &&
+          result['shopId'] != widget.expectedShopId) {
+        _showMessage(
+          'This QR code belongs to a different shop. Scan ${widget.expectedShopId}.',
+          isError: true,
+        );
+        await _scannerController.start();
+        return;
+      }
+
+      if (widget.expectedShopId != null && widget.expectedShopId!.isNotEmpty) {
+        Navigator.of(context).pop(result);
         return;
       }
 
