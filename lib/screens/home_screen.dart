@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'dart:async';
 import 'package:pegas_cashcollector/screens/addReceipts.dart';
+import 'package:pegas_cashcollector/screens/balance_in_hand_screen.dart';
 import 'package:pegas_cashcollector/screens/balance_screen.dart';
 import 'package:pegas_cashcollector/screens/codeEntryScreen.dart';
 import 'package:pegas_cashcollector/screens/stocklist.dart';
@@ -590,23 +591,23 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                         paddingV: menuItemPaddingV,
                       ),
                       //SizedBox(height: isSmallScreen ? 4 : 6),
-                      // _buildDrawerMenuItem(
-                      //   icon: Icons.account_balance_wallet_rounded,
-                      //   title: 'Balance in Hand',
-                      //   onTap: () {
-                      //     Navigator.pop(context);
-                      //     Navigator.push(
-                      //       context,
-                      //       MaterialPageRoute(
-                      //         builder: (_) => const BalanceInHandScreen(),
-                      //       ),
-                      //     );
-                      //   },
-                      //   fontSize: menuItemFontSize,
-                      //   iconSize: menuIconSize,
-                      //   paddingH: menuItemPaddingH,
-                      //   paddingV: menuItemPaddingV,
-                      // ),
+                      _buildDrawerMenuItem(
+                        icon: Icons.account_balance_wallet_rounded,
+                        title: 'Balance in Hand',
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const BalanceInHandScreen(),
+                            ),
+                          );
+                        },
+                        fontSize: menuItemFontSize,
+                        iconSize: menuIconSize,
+                        paddingH: menuItemPaddingH,
+                        paddingV: menuItemPaddingV,
+                      ),
                     // SizedBox(height: isSmallScreen ? 4 : 6),
                       _buildDrawerMenuItem(
                         icon: Icons.inventory_2_rounded,
