@@ -13,6 +13,7 @@ import 'shop_qr_scanner_screen.dart';
 class BalanceScreen extends StatefulWidget {
   final String shopName;
   final String routeName;
+  final String? routeId;
   final String shopId;
   final Function(String shopName, double reducedAmount) onBalanceAdjusted;
 
@@ -20,6 +21,7 @@ class BalanceScreen extends StatefulWidget {
     super.key,
     required this.shopName,
     required this.routeName,
+    this.routeId,
     required this.shopId,
     required this.onBalanceAdjusted,
   });
@@ -76,7 +78,7 @@ class _BalanceScreenState extends State<BalanceScreen>
           .collection('branches')
           .doc(branchId)
           .collection('routes')
-          .doc(widget.routeName)
+          .doc(widget.routeId ?? widget.routeName)
           .collection('shops')
           .doc(widget.shopId);
 
@@ -356,7 +358,7 @@ class _BalanceScreenState extends State<BalanceScreen>
         .collection('branches')
         .doc(branchId)
         .collection('routes')
-        .doc(widget.routeName)
+        .doc(widget.routeId ?? widget.routeName)
         .collection('shops')
         .doc(widget.shopId);
 
@@ -689,7 +691,7 @@ class _BalanceScreenState extends State<BalanceScreen>
                                     .collection('branches')
                                     .doc(branchId)
                                     .collection('routes')
-                                    .doc(widget.routeName)
+                                    .doc(widget.routeId ?? widget.routeName)
                                     .collection('shops')
                                     .doc(widget.shopId)
                                     .update(updateData);
@@ -699,7 +701,7 @@ class _BalanceScreenState extends State<BalanceScreen>
                                     .collection('branches')
                                     .doc(branchId)
                                     .collection('routes')
-                                    .doc(widget.routeName)
+                                    .doc(widget.routeId ?? widget.routeName)
                                     .collection('shops')
                                     .doc(widget.shopId)
                                     .collection('transactions')
@@ -1208,7 +1210,7 @@ class _BalanceScreenState extends State<BalanceScreen>
                                   .collection('branches')
                                   .doc(branchId)
                                   .collection('routes')
-                                  .doc(widget.routeName)
+                                  .doc(widget.routeId ?? widget.routeName)
                                   .collection('shops')
                                   .doc(widget.shopId);
 
@@ -1251,8 +1253,60 @@ class _BalanceScreenState extends State<BalanceScreen>
     );
   }
 
-  void _showFeedbackDialog() {
-    String? selectedReason;
+  void _showClosedShopFeedbackPrompt() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Closed Shop Feedback'),
+          content: const Text(
+            'Would you like to submit feedback for a closed shop?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _showClosedShopFeedbackConfirmation();
+              },
+              child: const Text('Feedback',style: TextStyle(color: Colors.green)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showClosedShopFeedbackConfirmation() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Select Feedback Type'),
+          content: const Text('Choose the feedback reason to continue.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _showFeedbackDialog(initialReason: 'Shop Closed 🏪');
+              },
+              child: const Text('Shop Closed', style: TextStyle(color: Colors.green)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showFeedbackDialog({String? initialReason}) {
+    String? selectedReason = initialReason;
     String note = '';
     final bool isLowBalanceEligible = (balanceAmount ?? 0) < 2500;
     bool isLocationVerified =
@@ -1770,7 +1824,7 @@ class _BalanceScreenState extends State<BalanceScreen>
                                   .collection('branches')
                                   .doc(branchId)
                                   .collection('routes')
-                                  .doc(widget.routeName)
+                                  .doc(widget.routeId ?? widget.routeName)
                                   .collection('shops')
                                   .doc(widget.shopId);
 
@@ -1964,6 +2018,18 @@ class _BalanceScreenState extends State<BalanceScreen>
           //     padding: const EdgeInsets.all(12),
           //   ),
           // ),
+          IconButton(
+            onPressed: _showClosedShopFeedbackPrompt,
+            icon: const Icon(
+              Icons.storefront_outlined,
+              color: AppColors.warningDark,
+            ),
+            tooltip: "Closed Shop Feedback",
+            style: IconButton.styleFrom(
+              backgroundColor: AppColors.warningDark.withOpacity(0.12),
+              padding: const EdgeInsets.all(12),
+            ),
+          ),
           IconButton(
             onPressed: _showCollectionTypeDialog,
             icon: const Icon(

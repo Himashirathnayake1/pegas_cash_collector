@@ -172,6 +172,7 @@ class _ShopQrScannerScreenState extends State<ShopQrScannerScreen> {
               (context) => BalanceScreen(
                 shopName: shopName,
                 routeName: routeId,
+                routeId: routeId,
                 shopId: code,
                 onBalanceAdjusted: (shopName, reducedAmount) {},
               ),

@@ -165,7 +165,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
             feedbackedUntil != null &&
             feedbackedUntil.isAfter(now);
 
-        if (status == 'Paid' && paidAt != null) {
+        if (!isFeedbacked && status == 'Paid' && paidAt != null) {
           final difference = now.difference(paidAt).inSeconds;
           if (difference >= 43200) {
             status = 'Unpaid';
@@ -1383,6 +1383,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
                       (context) => BalanceScreen(
                         shopName: shop['name'],
                         routeName: widget.routeName,
+                        routeId: widget.routeId,
                         shopId: shop['id'],
                         onBalanceAdjusted: (shopName, reducedAmount) async {
                           final updatedShops = List<Map<String, dynamic>>.from(
@@ -1403,8 +1404,14 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
                               updatedShops[shopIndex]['paidAt'] = now;
                               updatedShops[shopIndex]['paidAmount'] =
                                   reducedAmount;
-                              updatedShops[shopIndex]['feedbacked'] = false;
-                              updatedShops[shopIndex]['feedbackedUntil'] = null;
+                              if (reducedAmount != 0) {
+                                updatedShops[shopIndex]['feedbacked'] = false;
+                                updatedShops[shopIndex]['feedbackedUntil'] = null;
+                              } else {
+                                updatedShops[shopIndex]['feedbacked'] = true;
+                                updatedShops[shopIndex]['feedbackedUntil'] =
+                                    now.add(const Duration(hours: 12));
+                              }
                               allShops = updatedShops;
                               _filterShops();
                             });
