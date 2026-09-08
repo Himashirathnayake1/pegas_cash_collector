@@ -522,14 +522,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${shopsSnapshot.docs.length} shops',
-                  style: GoogleFonts.poppins(
-                    color: AppColors.lightTextSecondary,
-                    fontSize: 12,
-                  ),
-                ),
+             
               ],
             ),
             actions: [
@@ -1004,13 +997,7 @@ class _RouteShopsScreenState extends State<RouteShopsScreen>
                 color: AppColors.lightTextPrimary,
               ),
             ),
-            Text(
-              '${allShops.length} Shops',
-              style: GoogleFonts.poppins(
-                fontSize: 12,
-                color: AppColors.lightTextSecondary,
-              ),
-            ),
+         
           ],
         ),
         actions: [

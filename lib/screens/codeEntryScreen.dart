@@ -443,7 +443,7 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
                                   const SizedBox(height: 12),
                                   _buildCodeInput(),
 
-                                  const SizedBox(height: 24),
+                                  const SizedBox(height: 20),
 
                                   // Submit Button
                                   _buildSubmitButton(),
@@ -531,6 +531,7 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
         obscureText: true,
         obscuringCharacter: '✦',
         maxLength: 4,
+        textInputAction: TextInputAction.done,
         style: GoogleFonts.poppins(
           fontSize: 20,
           letterSpacing: 4,
@@ -551,6 +552,11 @@ class _AccessCodeEntryScreenState extends State<AccessCodeEntryScreen>
               const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
         ),
         keyboardType: TextInputType.number,
+        onSubmitted: (_) {
+          if (!_isChecking) {
+            _onSubmit();
+          }
+        },
       ),
     );
   }

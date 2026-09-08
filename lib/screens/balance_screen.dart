@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -33,6 +34,7 @@ class BalanceScreen extends StatefulWidget {
 class _BalanceScreenState extends State<BalanceScreen>
     with TickerProviderStateMixin {
   printer.ReceiptController? _receiptController;
+  bool _isPrintingReceipt = false;
 
   double? balanceAmount;
   double? creditLimit;
@@ -687,30 +689,46 @@ class _BalanceScreenState extends State<BalanceScreen>
                                       FieldValue.serverTimestamp();
                                 }
 
-                                await firestore
+                                final routeRef = firestore
                                     .collection('branches')
                                     .doc(branchId)
                                     .collection('routes')
-                                    .doc(widget.routeId ?? widget.routeName)
+                                    .doc(widget.routeId ?? widget.routeName);
+                                final shopRef = routeRef
                                     .collection('shops')
-                                    .doc(widget.shopId)
-                                    .update(updateData);
+                                    .doc(widget.shopId);
+
+                                await shopRef.update(updateData);
+
+                                final shopsSnapshot =
+                                    await routeRef.collection('shops').get();
+                                final routeBalance = shopsSnapshot.docs
+                                    .fold<double>(0.0, (total, shopDoc) {
+                                      final value = shopDoc.data()['totalPaid'];
+                                      final shopTotal =
+                                          value is num
+                                              ? value.toDouble()
+                                              : double.tryParse(
+                                                    value?.toString() ?? '',
+                                                  ) ??
+                                                  0.0;
+                                      return total + shopTotal;
+                                    });
+
+                                await routeRef.set({
+                                  'routeBalanceInHand': routeBalance,
+                                  'routeCollection': routeBalance,
+                                  'cashCollection': routeBalance,
+                                  'lastUpdated': FieldValue.serverTimestamp(),
+                                }, SetOptions(merge: true));
 
                                 // Add transaction record in Firestore
-                                await firestore
-                                    .collection('branches')
-                                    .doc(branchId)
-                                    .collection('routes')
-                                    .doc(widget.routeId ?? widget.routeName)
-                                    .collection('shops')
-                                    .doc(widget.shopId)
-                                    .collection('transactions')
-                                    .add({
-                                      'amount': reduction,
-                                      'type': 'paid',
-                                      'timestamp': FieldValue.serverTimestamp(),
-                                      'description': 'Payment collection',
-                                    });
+                                await shopRef.collection('transactions').add({
+                                  'amount': reduction,
+                                  'type': 'paid',
+                                  'timestamp': FieldValue.serverTimestamp(),
+                                  'description': 'Payment collection',
+                                });
 
                                 // Update via callback for parent screen
                                 widget.onBalanceAdjusted(
@@ -900,6 +918,8 @@ class _BalanceScreenState extends State<BalanceScreen>
                 ),
               ),
               onPressed: () async {
+                if (_isPrintingReceipt) return;
+
                 final device = await printer
                     .FlutterBluetoothPrinter.selectDevice(context);
                 if (device == null) {
@@ -915,10 +935,12 @@ class _BalanceScreenState extends State<BalanceScreen>
                   return;
                 }
 
+                await printer.FlutterBluetoothPrinter.connect(device.address);
+
                 await showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (context) {
+                  builder: (dialogContext) {
                     return AlertDialog(
                       backgroundColor: AppColors.lightSurface,
                       shape: RoundedRectangleBorder(
@@ -956,54 +978,61 @@ class _BalanceScreenState extends State<BalanceScreen>
                                 ),
                               ],
                             ),
-                        onInitialized: (controller) {
-                          _receiptController = controller;
-                        },
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: Text(
-                            "Exit",
-                            style: GoogleFonts.poppins(
-                              color: AppColors.lightTextSecondary,
-                            ),
-                          ),
-                        ),
-                        ElevatedButton(
-                          onPressed: () async {
-                            if (_receiptController != null) {
-                              await _receiptController!.print(
-                                address: device.address,
+                        onInitialized: (controller) async {
+                          final completer = Completer<void>();
+                          WidgetsBinding.instance.addPostFrameCallback((
+                            _,
+                          ) async {
+                            try {
+                              await Future.delayed(
+                                const Duration(milliseconds: 50),
                               );
+                              await controller.print(address: device.address);
+                              completer.complete();
+                            } catch (e) {
+                              completer.completeError(e);
+                            }
+                          });
+
+                          try {
+                            await completer.future;
+                            Navigator.pop(dialogContext);
+                            if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
-                                    "Receipt sent to printer",
+                                    "Receipt printed successfully!",
                                     style: GoogleFonts.poppins(),
                                   ),
                                   backgroundColor: AppColors.successDark,
                                 ),
                               );
                             }
-                            Navigator.of(context).pop();
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.accentTealDark,
-                            foregroundColor: Colors.white,
-                          ),
-                          child: Text(
-                            "Print",
-                            style: GoogleFonts.poppins(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
+                          } catch (e) {
+                            Navigator.pop(dialogContext);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    "Error printing receipt: $e",
+                                    style: GoogleFonts.poppins(),
+                                  ),
+                                  backgroundColor: AppColors.errorDark,
+                                ),
+                              );
+                            }
+                          }
+
+                          await printer.FlutterBluetoothPrinter.disconnect(
+                            device.address,
+                          );
+                        },
+                      ),
                     );
                   },
                 );
 
+                _receiptController = null;
                 Navigator.pop(context);
               },
             ),
@@ -1272,7 +1301,10 @@ class _BalanceScreenState extends State<BalanceScreen>
                 Navigator.pop(context);
                 _showClosedShopFeedbackConfirmation();
               },
-              child: const Text('Feedback',style: TextStyle(color: Colors.green)),
+              child: const Text(
+                'Feedback',
+                style: TextStyle(color: Colors.green),
+              ),
             ),
           ],
         );
@@ -1297,7 +1329,10 @@ class _BalanceScreenState extends State<BalanceScreen>
                 Navigator.pop(context);
                 _showFeedbackDialog(initialReason: 'Shop Closed 🏪');
               },
-              child: const Text('Shop Closed', style: TextStyle(color: Colors.green)),
+              child: const Text(
+                'Shop Closed',
+                style: TextStyle(color: Colors.green),
+              ),
             ),
           ],
         );
