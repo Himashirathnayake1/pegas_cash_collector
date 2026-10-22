@@ -588,24 +588,24 @@ class _RoutePageState extends State<RoutePage> with TickerProviderStateMixin {
                         paddingH: menuItemPaddingH,
                         paddingV: menuItemPaddingV,
                       ),
-                      //SizedBox(height: isSmallScreen ? 4 : 6),
-                      // _buildDrawerMenuItem(
-                      //   icon: Icons.account_balance_wallet_rounded,
-                      //   title: 'Balance in Hand',
-                      //   onTap: () {
-                      //     Navigator.pop(context);
-                      //     Navigator.push(
-                      //       context,
-                      //       MaterialPageRoute(
-                      //         builder: (_) => const BalanceInHandScreen(),
-                      //       ),
-                      //     );
-                      //   },
-                      //   fontSize: menuItemFontSize,
-                      //   iconSize: menuIconSize,
-                      //   paddingH: menuItemPaddingH,
-                      //   paddingV: menuItemPaddingV,
-                      // ),
+                      SizedBox(height: isSmallScreen ? 4 : 6),
+                    //   _buildDrawerMenuItem(
+                    //     icon: Icons.account_balance_wallet_rounded,
+                    //     title: 'Balance in Hand',
+                    //     onTap: () {
+                    //       Navigator.pop(context);
+                    //       Navigator.push(
+                    //         context,
+                    //         MaterialPageRoute(
+                    //           builder: (_) => const BalanceInHandScreen(),
+                    //         ),
+                    //       );
+                    //     },
+                    //     fontSize: menuItemFontSize,
+                    //     iconSize: menuIconSize,
+                    //     paddingH: menuItemPaddingH,
+                    //     paddingV: menuItemPaddingV,
+                    //   ),
                     // SizedBox(height: isSmallScreen ? 4 : 6),
                       _buildDrawerMenuItem(
                         icon: Icons.inventory_2_rounded,

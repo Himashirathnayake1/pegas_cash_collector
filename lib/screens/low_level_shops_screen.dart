@@ -621,49 +621,49 @@ class _LowLevelShopsScreenState extends State<LowLevelShopsScreen> {
                           ),
                           const SizedBox(height: 8),
                           // Phone Button
-                          GestureDetector(
-                            onTap: () async {
-                              if (phone != 'N/A') {
-                                try {
-                                  final phoneUrl = 'tel:$phone';
-                                  if (await canLaunchUrl(Uri.parse(phoneUrl))) {
-                                    await launchUrl(
-                                      Uri.parse(phoneUrl),
-                                      mode: LaunchMode.externalApplication,
-                                    );
-                                  }
-                                } catch (e) {
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Error calling: $e'),
-                                        duration: const Duration(seconds: 2),
-                                      ),
-                                    );
-                                  }
-                                }
-                              }
-                            },
-                            child: Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF1A4D3E)
-                                    .withOpacity(0.5),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: const Color(0xFF20D9A3)
-                                      .withOpacity(0.5),
-                                  width: 1,
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.call_rounded,
-                                color: const Color(0xFF20D9A3),
-                                size: 20,
-                              ),
-                            ),
-                          ),
+                          // GestureDetector(
+                          //   onTap: () async {
+                          //     if (phone != 'N/A') {
+                          //       try {
+                          //         final phoneUrl = 'tel:$phone';
+                          //         if (await canLaunchUrl(Uri.parse(phoneUrl))) {
+                          //           await launchUrl(
+                          //             Uri.parse(phoneUrl),
+                          //             mode: LaunchMode.externalApplication,
+                          //           );
+                          //         }
+                          //       } catch (e) {
+                          //         if (mounted) {
+                          //           ScaffoldMessenger.of(context).showSnackBar(
+                          //             SnackBar(
+                          //               content: Text('Error calling: $e'),
+                          //               duration: const Duration(seconds: 2),
+                          //             ),
+                          //           );
+                          //         }
+                          //       }
+                          //     }
+                          //   },
+                          //   child: Container(
+                          //     width: 40,
+                          //     height: 40,
+                          //     decoration: BoxDecoration(
+                          //       color: const Color(0xFF1A4D3E)
+                          //           .withOpacity(0.5),
+                          //       borderRadius: BorderRadius.circular(10),
+                          //       border: Border.all(
+                          //         color: const Color(0xFF20D9A3)
+                          //             .withOpacity(0.5),
+                          //         width: 1,
+                          //       ),
+                          //     ),
+                          //     child: const Icon(
+                          //       Icons.call_rounded,
+                          //       color: const Color(0xFF20D9A3),
+                          //       size: 20,
+                          //     ),
+                          //   ),
+                          // ),
                         ],
                       ),
                     ],
